@@ -15,13 +15,14 @@
     flex: 1 1 auto;
     min-width: 0;
     gap: 8px !important;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
 }
 
 .gantt-toolbar-right {
     flex: 0 0 auto;
     min-width: max-content;
     white-space: nowrap;
+    align-self: flex-start;
 }
 
 .gantt-toolbar-left > :nth-child(1) {
