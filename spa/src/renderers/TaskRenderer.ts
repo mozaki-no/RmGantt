@@ -1,6 +1,6 @@
 import type { Viewport, Task, ZoomLevel, Relation, LayoutRow } from '../types';
 import { LayoutEngine } from '../engines/LayoutEngine';
-import { buildDependencySummary } from './dependencyIndicators';
+import { getDependencySummary } from './dependencyIndicators';
 import type { BaselineSnapshot } from '../types/baseline';
 import { calculateBaselineDiff, getBaselineTaskState } from '../utils/baseline';
 import { canvasFonts, designTokens } from '../styles/designTokens';
@@ -58,31 +58,31 @@ export class TaskRenderer {
         const xTodayLine = LayoutEngine.calendarDateToX(today, viewport, 'end') - viewport.scrollX;
 
         const showDependencyIndicators = zoomLevel === 0 || zoomLevel === 1;
-        const dependencySummary = showDependencyIndicators ? buildDependencySummary(tasks, relations) : null;
+        const dependencySummary = showDependencyIndicators ? getDependencySummary(tasks, relations) : null;
 
-        // Draw Project Summaries (Headers) and Version Headers
-        layoutRows.forEach(row => {
-            if (row.rowIndex >= startRow && row.rowIndex <= endRow) {
-                if (row.type === 'header') {
-                    if (row.startDate !== undefined && row.dueDate !== undefined) {
-                        const s = LayoutEngine.snapDate(row.startDate, zoomLevel);
-                        const d = LayoutEngine.snapDate(row.dueDate, zoomLevel);
-                        const x1 = LayoutEngine.calendarDateToX(s, viewport, 'start') - viewport.scrollX;
-                        const x2 = LayoutEngine.calendarDateToX(d, viewport, 'end') - viewport.scrollX;
-                        const y = row.rowIndex * viewport.rowHeight - viewport.scrollY;
-                        this.drawProjectSummaryBar(ctx, x1, x2, y, viewport.rowHeight);
-                    }
-                } else if (row.type === 'version') {
-                    if (row.startDate !== undefined && row.dueDate !== undefined) {
-                        const s = LayoutEngine.snapDate(row.startDate, zoomLevel);
-                        const d = LayoutEngine.snapDate(row.dueDate, zoomLevel);
-                        const x1 = LayoutEngine.calendarDateToX(s, viewport, 'start') - viewport.scrollX;
-                        const x2 = LayoutEngine.calendarDateToX(d, viewport, 'end') - viewport.scrollX;
-                        const y = row.rowIndex * viewport.rowHeight - viewport.scrollY;
-                        this.drawVersionSummaryBar(ctx, x1, x2, y, viewport.rowHeight, row.ratioDone ?? 0);
-                        if (showTaskTitles) {
-                            this.drawSubjectBeforeBar(ctx, { subject: row.name } as Task, x1, y, x2 - x1, viewport.rowHeight);
-                        }
+        // Draw Project Summaries (Headers) and Version Headers.
+        // Slicing keeps this proportional to the visible rows rather than to
+        // the whole layout, which matters once a project has thousands of them.
+        LayoutEngine.sliceLayoutRowsInRowRange(layoutRows, startRow, endRow).forEach(row => {
+            if (row.type === 'header') {
+                if (row.startDate !== undefined && row.dueDate !== undefined) {
+                    const s = LayoutEngine.snapDate(row.startDate, zoomLevel);
+                    const d = LayoutEngine.snapDate(row.dueDate, zoomLevel);
+                    const x1 = LayoutEngine.calendarDateToX(s, viewport, 'start') - viewport.scrollX;
+                    const x2 = LayoutEngine.calendarDateToX(d, viewport, 'end') - viewport.scrollX;
+                    const y = row.rowIndex * viewport.rowHeight - viewport.scrollY;
+                    this.drawProjectSummaryBar(ctx, x1, x2, y, viewport.rowHeight);
+                }
+            } else if (row.type === 'version') {
+                if (row.startDate !== undefined && row.dueDate !== undefined) {
+                    const s = LayoutEngine.snapDate(row.startDate, zoomLevel);
+                    const d = LayoutEngine.snapDate(row.dueDate, zoomLevel);
+                    const x1 = LayoutEngine.calendarDateToX(s, viewport, 'start') - viewport.scrollX;
+                    const x2 = LayoutEngine.calendarDateToX(d, viewport, 'end') - viewport.scrollX;
+                    const y = row.rowIndex * viewport.rowHeight - viewport.scrollY;
+                    this.drawVersionSummaryBar(ctx, x1, x2, y, viewport.rowHeight, row.ratioDone ?? 0);
+                    if (showTaskTitles) {
+                        this.drawSubjectBeforeBar(ctx, { subject: row.name } as Task, x1, y, x2 - x1, viewport.rowHeight);
                     }
                 }
             }

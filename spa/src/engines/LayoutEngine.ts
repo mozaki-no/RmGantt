@@ -1,4 +1,4 @@
-import type { Task, Viewport, Bounds, ZoomLevel } from '../types';
+import type { Task, Viewport, Bounds, ZoomLevel, LayoutRow } from '../types';
 import { timelineToCalendarDate, toTimelineDate, type CalendarDate, type TimelineDate } from '../utils/dateOnly';
 
 type CalendarCellPosition = 'start' | 'center' | 'end';
@@ -114,31 +114,40 @@ export class LayoutEngine {
   }
 
   /**
-   * Returns tasks within the given row range efficiently.
-   * Assumes tasks are ordered by `rowIndex` ascending (as produced by TaskStore layout).
+   * Returns the entries within the given row range efficiently.
+   * Assumes entries are ordered by `rowIndex` ascending, which is what
+   * TaskStore's layout pass produces for both `tasks` and `layoutRows`.
    */
-  static sliceTasksInRowRange(tasks: Task[], startRow: number, endRow: number): Task[] {
-    if (tasks.length === 0) return [];
+  static sliceByRowRange<T extends { rowIndex: number }>(entries: T[], startRow: number, endRow: number): T[] {
+    if (entries.length === 0) return [];
     if (endRow < startRow) return [];
 
-    // Lower-bound search for the first task whose rowIndex >= startRow
+    // Lower-bound search for the first entry whose rowIndex >= startRow
     let lo = 0;
-    let hi = tasks.length;
+    let hi = entries.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (tasks[mid].rowIndex < startRow) {
+      if (entries[mid].rowIndex < startRow) {
         lo = mid + 1;
       } else {
         hi = mid;
       }
     }
 
-    const result: Task[] = [];
-    for (let i = lo; i < tasks.length; i += 1) {
-      const task = tasks[i];
-      if (task.rowIndex > endRow) break;
-      result.push(task);
+    const result: T[] = [];
+    for (let i = lo; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (entry.rowIndex > endRow) break;
+      result.push(entry);
     }
     return result;
+  }
+
+  static sliceTasksInRowRange(tasks: Task[], startRow: number, endRow: number): Task[] {
+    return this.sliceByRowRange(tasks, startRow, endRow);
+  }
+
+  static sliceLayoutRowsInRowRange(rows: LayoutRow[], startRow: number, endRow: number): LayoutRow[] {
+    return this.sliceByRowRange(rows, startRow, endRow);
   }
 }

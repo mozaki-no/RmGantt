@@ -7,6 +7,7 @@ import {
     buildRelationRoutePoints,
     normalizeRelationForRendering,
     isRouteVisible,
+    selectRoutableRelations,
     shouldRenderRelationsAtZoom
 } from './relationGeometry';
 import { designTokens } from '../styles/designTokens';
@@ -180,7 +181,10 @@ export class OverlayRenderer {
         selectedRelationId: string | null
     ) {
         const context = buildRelationRenderContext(tasks, viewport, zoomLevel);
-        const drawableRelations = draftRelation ? [...relations, { id: '__draft__', ...draftRelation }] : relations;
+        // Only relations whose endpoints are both in the buffered row window can
+        // produce a route, so the rest never needed to be walked at all.
+        const routable = selectRoutableRelations(relations, context);
+        const drawableRelations = draftRelation ? [...routable, { id: '__draft__', ...draftRelation }] : routable;
 
         drawableRelations.forEach((relation) => {
             const normalizedRelation = normalizeRelationForRendering(relation, context);

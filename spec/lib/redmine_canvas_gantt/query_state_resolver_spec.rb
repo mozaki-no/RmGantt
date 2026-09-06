@@ -58,6 +58,10 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(issue_scope).to receive(:where).and_return(issue_scope)
     allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
     allow(issue_scope).to receive(:to_a).and_return([])
+    # These examples cover query-state resolution against injected doubles.
+    # Preloading reaches the real TimeEntry visibility scope, and has its own
+    # describe block below.
+    allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
   end
 
   it 'extracts supported shared state and applies url overrides' do
@@ -774,5 +778,57 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     )
 
     expect { resolver.resolve(project_ids: [1, 2]) }.to raise_error(overflow)
+  end
+
+  describe 'spent time preloading' do
+    def build_issue(id, spent_hours)
+      instance_double(Issue, id: id, start_date: nil, spent_hours: spent_hours)
+    end
+
+    def resolve_with(issues, extra_params = {})
+      allow(issue_scope).to receive(:where).and_return(issue_scope)
+      allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
+      allow(issue_scope).to receive(:to_a).and_return(issues)
+
+      described_class.new(
+        project: project,
+        params: ActionController::Parameters.new(extra_params),
+        current_user: current_user,
+        issue_scope: issue_scope,
+        issue_includes: issue_includes
+      ).resolve(project_ids: [1])
+    end
+
+    it 'preloads the loaded collection once, where the records are loaded' do
+      issues = [build_issue(1, 0.0), build_issue(2, 0.0)]
+
+      expect(RedmineCanvasGantt::SpentHoursPreloader)
+        .to receive(:call).with(issues, current_user).once
+
+      resolve_with(issues)
+    end
+
+    it 'preloads before sorting, so sorting by spent time is not a per-issue SUM' do
+      call_order = []
+      issues = [build_issue(1, 5.0), build_issue(2, 1.0)]
+
+      allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call) { call_order << :preload }
+      issues.each do |issue|
+        allow(issue).to receive(:spent_hours) do
+          call_order << :read
+          0.0
+        end
+      end
+
+      resolve_with(issues, sort: 'spentHours:asc')
+
+      expect(call_order.first).to eq(:preload)
+    end
+
+    it 'delegates the empty case to the preloader rather than branching here' do
+      expect(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call).with([], current_user)
+
+      resolve_with([])
+    end
   end
 end

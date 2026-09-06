@@ -241,6 +241,80 @@ RSpec.describe CanvasGanttsController, type: :controller do
     end
   end
 
+  describe 'GET #asset' do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @asset_dir = Pathname.new(dir)
+        example.run
+      end
+    end
+
+    # Rails.root is deliberately NOT stubbed here. I18n resolves its load path
+    # lazily, so a stubbed root during a real request leaves the process with
+    # no usable locale and every later example fails. Path resolution has its
+    # own unit specs above; these cover delivery only, so the resolved path is
+    # stubbed instead.
+    def serve(name)
+      path = @asset_dir.join(name)
+      File.write(path, 'console.log("ok");') unless path.exist?
+      allow(controller).to receive(:safe_build_asset_path).and_return(path.to_s)
+      get :asset, params: { asset_path: "assets/#{name}" }
+    end
+
+    def cache_control
+      response.headers['Cache-Control'].to_s
+    end
+
+    it 'marks content-hashed assets immutable so they are never refetched' do
+      serve('main-C-eaXpl1.js')
+
+      expect(response).to have_http_status(:ok)
+      expect(cache_control).to include('immutable')
+      expect(cache_control).to include("max-age=#{CanvasGanttsController::ASSET_IMMUTABLE_MAX_AGE.to_i}")
+    end
+
+    it 'keeps hashed assets out of shared caches' do
+      serve('main-C-eaXpl1.js')
+
+      expect(cache_control).to include('private')
+      expect(cache_control).not_to include('public')
+    end
+
+    it 'uses a short revalidating window for assets without a content hash' do
+      serve('vite.svg')
+
+      expect(response).to have_http_status(:ok)
+      expect(cache_control).to include("max-age=#{CanvasGanttsController::ASSET_MUTABLE_MAX_AGE.to_i}")
+      expect(cache_control).not_to include('immutable')
+    end
+
+    it 'always emits a validator so a stale entry can answer 304' do
+      serve('vite.svg')
+
+      expect(response.headers['ETag']).to be_present
+      expect(response.headers['Last-Modified']).to be_present
+    end
+
+    it 'answers 304 when the client already holds the current entity' do
+      serve('vite.svg')
+      etag = response.headers['ETag']
+      expect(etag).to be_present
+
+      request.headers['If-None-Match'] = etag
+      serve('vite.svg')
+
+      expect(response).to have_http_status(:not_modified)
+    end
+
+    it 'returns not found when the path does not resolve inside the build directory' do
+      allow(controller).to receive(:safe_build_asset_path).and_return(nil)
+
+      get :asset, params: { asset_path: '../config/database.yml' }
+
+      expect(response).to have_http_status(:not_found)
+    end
+  end
+
   describe 'GET #data' do
     it 'returns forbidden when view permission is missing' do
       allow(controller).to receive(:set_permissions) do
@@ -328,9 +402,9 @@ RSpec.describe CanvasGanttsController, type: :controller do
       end
       allow(controller).to receive(:descendant_project_ids).and_return([1, 2])
       filter_option_project = double('ProjectOption', id: 1, name: 'Demo')
-      filter_option_issue = double('FilterOptionIssue')
+      filter_option_assignee = { id: 7, project_id: 1, name: 'Alice' }
       allow(controller).to receive(:filter_option_projects).with([1, 2], member_projects_only: false).and_return([filter_option_project])
-      allow(controller).to receive(:filter_option_issues).with([1, 2]).and_return([filter_option_issue])
+      allow(controller).to receive(:filter_option_assignees).with([1, 2]).and_return([filter_option_assignee])
       allow(controller).to receive(:query_state_resolver).and_return(resolver)
       allow(controller).to receive(:baseline_repository).and_return(baseline_repository)
       allow(controller).to receive(:visible_baseline_snapshot).with(baseline_snapshot, [1, 2]).and_return(baseline_snapshot)
@@ -354,7 +428,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
         project_ids: [1, 2],
         issues: [issue],
         filter_option_projects: [filter_option_project],
-        filter_option_issues: [filter_option_issue],
+        filter_option_assignees: [filter_option_assignee],
         initial_state: { query_id: 7 },
         query_context: { query_id: 7, explicit_overrides: {} },
         warnings: ['Invalid query_id ignored', 'Baseline warning'],
@@ -396,7 +470,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
       baseline_repository = instance_double(RedmineCanvasGantt::BaselineRepository)
       resolver = instance_double(RedmineCanvasGantt::QueryStateResolver)
       filter_option_project = double('ProjectOption', id: 1, name: 'Demo')
-      filter_option_issue = double('FilterOptionIssue')
+      filter_option_assignee = { id: 7, project_id: 1, name: 'Alice' }
       issue = double('Issue', id: 10, project_id: 1)
 
       allow(controller).to receive(:set_permissions) do
@@ -404,7 +478,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
       end
       allow(controller).to receive(:descendant_project_ids).and_return([1, 2])
       allow(controller).to receive(:filter_option_projects).with([1, 2], member_projects_only: true).and_return([filter_option_project])
-      allow(controller).to receive(:filter_option_issues).with([1, 2]).and_return([filter_option_issue])
+      allow(controller).to receive(:filter_option_assignees).with([1, 2]).and_return([filter_option_assignee])
       allow(controller).to receive(:query_state_resolver).and_return(resolver)
       allow(controller).to receive(:baseline_repository).and_return(baseline_repository)
       allow(resolver).to receive(:resolve).and_return({
@@ -435,6 +509,89 @@ RSpec.describe CanvasGanttsController, type: :controller do
       get :data, params: { project_id: 'demo', member_projects_only: '1' }, format: :json
 
       expect(response).to have_http_status(:ok)
+    end
+  end
+
+  describe 'GET #data payload compression' do
+    def stub_data_pipeline(payload)
+      resolver = instance_double(RedmineCanvasGantt::QueryStateResolver)
+      payload_builder = instance_double(RedmineCanvasGantt::DataPayloadBuilder)
+      baseline_repository = instance_double(RedmineCanvasGantt::BaselineRepository)
+
+      allow(controller).to receive(:set_permissions) do
+        controller.instance_variable_set(:@permissions, { editable: true, viewable: true, baseline_editable: true })
+      end
+      allow(controller).to receive(:descendant_project_ids).and_return([1])
+      allow(controller).to receive(:filter_option_projects).and_return([])
+      allow(controller).to receive(:filter_option_assignees).and_return([])
+      allow(controller).to receive(:filter_option_trackers).and_return([])
+      allow(controller).to receive(:query_state_resolver).and_return(resolver)
+      allow(controller).to receive(:baseline_repository).and_return(baseline_repository)
+      allow(controller).to receive(:visible_baseline_snapshot).and_return(nil)
+      allow(controller).to receive(:data_payload_builder).and_return(payload_builder)
+      allow(resolver).to receive(:resolve).and_return({
+        issues: [],
+        initial_state: {},
+        query_context: {},
+        warnings: []
+      })
+      allow(baseline_repository).to receive(:load).and_return(
+        RedmineCanvasGantt::BaselineRepository::LoadResult.new(snapshot: nil, warnings: [])
+      )
+      allow(payload_builder).to receive(:build).and_return(payload)
+    end
+
+    # Comfortably past the 4 KiB floor, and compressible.
+    let(:large_payload) { { tasks: Array.new(500) { |i| { id: i, subject: "issue #{i}" } } } }
+    let(:small_payload) { { tasks: [] } }
+
+    it 'compresses a large payload when the client accepts gzip' do
+      stub_data_pipeline(large_payload)
+      request.headers['Accept-Encoding'] = 'gzip, deflate, br'
+
+      get :data, params: { project_id: 'demo' }, format: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.headers['Content-Encoding']).to eq('gzip')
+      expect(response.headers['Vary'].to_s).to include('Accept-Encoding')
+
+      decoded = JSON.parse(ActiveSupport::Gzip.decompress(response.body))
+      expect(decoded['tasks'].length).to eq(500)
+    end
+
+    it 'sends the payload uncompressed when gzip was not offered' do
+      stub_data_pipeline(large_payload)
+      request.headers['Accept-Encoding'] = 'br'
+
+      get :data, params: { project_id: 'demo' }, format: :json
+
+      expect(response.headers['Content-Encoding']).to be_blank
+      expect(JSON.parse(response.body)['tasks'].length).to eq(500)
+    end
+
+    it 'leaves a small payload uncompressed even when gzip is offered' do
+      stub_data_pipeline(small_payload)
+      request.headers['Accept-Encoding'] = 'gzip'
+
+      get :data, params: { project_id: 'demo' }, format: :json
+
+      expect(response.headers['Content-Encoding']).to be_blank
+      expect(JSON.parse(response.body)).to eq('tasks' => [])
+    end
+
+    it 'can be disabled for deployments whose proxy re-encodes responses' do
+      stub_data_pipeline(large_payload)
+      request.headers['Accept-Encoding'] = 'gzip'
+
+      begin
+        ENV['REDMINE_CANVAS_GANTT_DISABLE_GZIP'] = '1'
+        get :data, params: { project_id: 'demo' }, format: :json
+      ensure
+        ENV.delete('REDMINE_CANVAS_GANTT_DISABLE_GZIP')
+      end
+
+      expect(response.headers['Content-Encoding']).to be_blank
+      expect(JSON.parse(response.body)['tasks'].length).to eq(500)
     end
   end
 

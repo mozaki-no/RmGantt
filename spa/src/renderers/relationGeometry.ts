@@ -15,6 +15,8 @@ export type RelationRenderContext = {
     taskById: Map<string, Task>;
     rectById: Map<string, Rect>;
     allRects: Array<{ id: string; rect: Rect }>;
+    /** Same rects as `allRects`, flattened once so routing need not rebuild it per relation. */
+    obstacleRects: Rect[];
 };
 
 type RelationRenderInput = Pick<Relation, 'from' | 'to' | 'type'> | Pick<DraftRelation, 'from' | 'to' | 'type'>;
@@ -35,6 +37,7 @@ export const buildRelationRenderContext = (
     const taskById = new Map<string, Task>();
     const rectById = new Map<string, Rect>();
     const allRects: Array<{ id: string; rect: Rect }> = [];
+    const obstacleRects: Rect[] = [];
 
     tasks.forEach((task) => {
         taskById.set(task.id, task);
@@ -47,9 +50,93 @@ export const buildRelationRenderContext = (
         };
         rectById.set(task.id, rect);
         allRects.push({ id: task.id, rect });
+        obstacleRects.push(rect);
     });
 
-    return { taskById, rectById, allRects };
+    return { taskById, rectById, allRects, obstacleRects };
+};
+
+type RelationIndexCache = {
+    relations: Relation[];
+    byTaskId: Map<string, number[]>;
+};
+
+let relationIndexCache: RelationIndexCache | null = null;
+
+/**
+ * Maps a task id to the positions of the relations that touch it, memoized on
+ * the identity of the relations array. TaskStore replaces that array whenever
+ * relations actually change, so panning and scrolling reuse the index.
+ */
+const getRelationIndex = (relations: Relation[]): Map<string, number[]> => {
+    const cached = relationIndexCache;
+    if (cached && cached.relations === relations) return cached.byTaskId;
+
+    const byTaskId = new Map<string, number[]>();
+    const push = (taskId: string, position: number) => {
+        const bucket = byTaskId.get(taskId);
+        if (bucket) {
+            bucket.push(position);
+        } else {
+            byTaskId.set(taskId, [position]);
+        }
+    };
+
+    relations.forEach((relation, position) => {
+        push(relation.from, position);
+        if (relation.to !== relation.from) push(relation.to, position);
+    });
+
+    relationIndexCache = { relations, byTaskId };
+    return byTaskId;
+};
+
+export const clearRelationIndexCache = (): void => {
+    relationIndexCache = null;
+};
+
+/**
+ * The relations that can actually produce a route in `context`.
+ *
+ * `buildRelationRoutePoints` returns null unless both endpoints resolve inside
+ * the context, and rendering only ever reorders a relation's own two
+ * endpoints, so filtering on them up front is a pre-filter rather than a
+ * change in what gets drawn. It replaces a full scan of every relation on
+ * every frame with a lookup proportional to the rows in view.
+ *
+ * The result keeps the order of the source array so overlapping routes stack
+ * exactly as they did before.
+ */
+export const selectRoutableRelations = (
+    relations: Relation[],
+    context: RelationRenderContext
+): Relation[] => {
+    if (relations.length === 0 || context.taskById.size === 0) return [];
+
+    // Walking the relations directly wins when there are few of them; the
+    // index only pays off once relations outnumber the rows in view.
+    if (relations.length <= context.taskById.size) {
+        return relations.filter((relation) => (
+            context.taskById.has(relation.from) && context.taskById.has(relation.to)
+        ));
+    }
+
+    const index = getRelationIndex(relations);
+    const positions = new Set<number>();
+
+    context.taskById.forEach((_task, taskId) => {
+        const bucket = index.get(taskId);
+        if (!bucket) return;
+        for (const position of bucket) {
+            const relation = relations[position];
+            if (!context.taskById.has(relation.from) || !context.taskById.has(relation.to)) continue;
+            positions.add(position);
+        }
+    });
+
+    return Array.from(positions)
+        .sort((left, right) => left - right)
+        .map((position) => relations[position]);
 };
 
 export const buildRelationRoutePoints = (
@@ -71,15 +158,14 @@ export const buildRelationRoutePoints = (
     const toRect = context.rectById.get(normalizedRelation.to);
     if (!fromRect || !toRect) return null;
 
-    const obstacles = context.allRects
-        .filter((entry) => entry.id !== normalizedRelation.from && entry.id !== normalizedRelation.to)
-        .map((entry) => entry.rect);
-
+    // The endpoints are excluded by identity rather than by rebuilding the
+    // obstacle list, which previously allocated a copy of every visible rect
+    // for every relation on every frame.
     const oneDayMs = 24 * 60 * 60 * 1000;
     return routeDependencyFS(
         fromRect,
         toRect,
-        obstacles,
+        context.obstacleRects,
         { scrollY: viewport.scrollY, height: viewport.height },
         {
             rowHeight: viewport.rowHeight,
@@ -90,7 +176,9 @@ export const buildRelationRoutePoints = (
         {
             ...RELATION_ROUTE_PARAMS,
             step: viewport.rowHeight
-        }
+        },
+        fromRect,
+        toRect
     );
 };
 

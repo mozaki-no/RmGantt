@@ -1,8 +1,14 @@
+require 'set'
+
 module RedmineCanvasGantt
   class CustomFieldExtractor
     def initialize(serializer:, supported_formats:)
       @serializer = serializer
       @supported_formats = supported_formats
+      # Issue#available_custom_fields is a pure function of (project, tracker),
+      # so both the applicable id set and the field objects themselves can be
+      # memoized per pair instead of recomputed for every issue.
+      @applicable_custom_field_ids = {}
     end
 
     def build_project_custom_fields(project_ids, issues = [])
@@ -17,7 +23,7 @@ module RedmineCanvasGantt
         end
       end
 
-      issue_fields = Array(issues).flat_map do |issue|
+      issue_fields = representative_issues_per_field_scope(issues).flat_map do |issue|
         issue.custom_field_values.map(&:custom_field)
       end.compact.select do |custom_field|
         custom_field.is_a?(IssueCustomField) &&
@@ -72,6 +78,26 @@ module RedmineCanvasGantt
 
     private
 
+    # The custom field set of an issue is determined by its project and
+    # tracker, so one representative per distinct pair yields the same union of
+    # fields as walking the entire collection.
+    def representative_issues_per_field_scope(issues)
+      representatives = {}
+
+      Array(issues).each do |issue|
+        key = field_scope_key(issue)
+        representatives[key] ||= issue
+      end
+
+      representatives.values
+    end
+
+    def field_scope_key(issue)
+      project_id = issue.respond_to?(:project_id) ? issue.project_id : nil
+      tracker_id = issue.respond_to?(:tracker_id) ? issue.tracker_id : nil
+      [project_id, tracker_id]
+    end
+
     def load_project_issue_custom_fields(project)
       Array(project.all_issue_custom_fields)
     rescue NoMethodError
@@ -83,6 +109,13 @@ module RedmineCanvasGantt
     end
 
     def issue_applicable_custom_field_ids(issue)
+      key = field_scope_key(issue)
+      return @applicable_custom_field_ids[key] if @applicable_custom_field_ids.key?(key)
+
+      @applicable_custom_field_ids[key] = compute_applicable_custom_field_ids(issue)
+    end
+
+    def compute_applicable_custom_field_ids(issue)
       available_fields = if issue.respond_to?(:available_custom_fields)
                            Array(issue.available_custom_fields)
                          else
@@ -94,13 +127,14 @@ module RedmineCanvasGantt
         .map(&:id)
         .compact
 
-      return ids.uniq unless ids.empty?
+      return ids.uniq.to_set unless ids.empty?
 
       Array(issue.custom_field_values)
         .filter_map { |value| value.custom_field&.id }
         .uniq
+        .to_set
     rescue StandardError
-      []
+      Set.new
     end
   end
 end

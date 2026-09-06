@@ -8,7 +8,7 @@ module RedmineCanvasGantt
       @data_payload_budget = data_payload_budget
     end
 
-    def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_issues:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil)
+    def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_assignees:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil)
       {
         tasks: build_tasks(issues),
         custom_fields: @custom_field_extractor.build_project_custom_fields(project_ids, issues),
@@ -16,7 +16,7 @@ module RedmineCanvasGantt
         versions: build_versions(project_ids),
         filter_options: build_filter_options(
           projects: filter_option_projects,
-          issues: filter_option_issues,
+          assignee_candidates: filter_option_assignees,
           trackers: filter_option_trackers || []
         ),
         statuses: build_statuses,
@@ -30,13 +30,25 @@ module RedmineCanvasGantt
       }.compact
     end
 
+    # Serialization stays free of queries: Issue#spent_hours is preloaded by
+    # QueryStateResolver when the collection is loaded, so reading it here is
+    # an attribute read rather than a per-record SUM.
     def build_tasks(issues)
       can_log_time_by_project_id = {}
+      can_edit_issues_by_project_id = {}
 
       issues.each_with_index.map do |issue, idx|
+        # allowed_to?(:edit_issues) only depends on the project, so it is
+        # memoized; Issue#editable? stays per-issue because workflow rules can
+        # differ.  A project without :edit_issues can never make editable? the
+        # deciding factor here, so the short circuit preserves the result.
+        can_edit_project = can_edit_issues_by_project_id.fetch(issue.project_id) do
+          can_edit_issues_by_project_id[issue.project_id] = @current_user.allowed_to?(:edit_issues, issue.project)
+        end
+
         build_task_state(issue).merge(
           display_order: idx,
-          editable: @current_user.allowed_to?(:edit_issues, issue.project) && issue.editable?,
+          editable: can_edit_project && issue.editable?,
           can_log_time: can_log_time_by_project_id.fetch(issue.project_id) do
             can_log_time_by_project_id[issue.project_id] = @current_user.allowed_to?(:log_time, issue.project)
           end
@@ -119,10 +131,10 @@ module RedmineCanvasGantt
       end
     end
 
-    def build_filter_options(projects:, issues:, trackers:)
+    def build_filter_options(projects:, assignee_candidates:, trackers:)
       {
         projects: build_project_options(projects),
-        assignees: build_assignee_options(issues),
+        assignees: build_assignee_options(assignee_candidates),
         trackers: build_tracker_options(trackers)
       }
     end
@@ -133,18 +145,22 @@ module RedmineCanvasGantt
         .sort_by { |entry| entry[:name].to_s.downcase }
     end
 
-    def build_assignee_options(issues)
+    # Assignee candidates are built from a distinct (assigned_to_id,
+    # project_id) projection rather than from materialized Issue records, so
+    # the cost is O(assignee-project pairs) instead of O(visible issues).
+    # Issue-like objects remain accepted for callers that already hold them.
+    def build_assignee_options(candidates)
       grouped = {}
 
-      issues.each do |issue|
-        assignee_id = issue.assigned_to_id
+      candidates.each do |candidate|
+        assignee_id, project_id, assignee_name = assignee_candidate_values(candidate)
         grouped[assignee_id] ||= {
           id: assignee_id,
-          name: assignee_id.nil? ? nil : issue.assigned_to&.name,
+          name: assignee_id.nil? ? nil : assignee_name,
           project_ids: Set.new
         }
-        grouped[assignee_id][:name] ||= issue.assigned_to&.name if assignee_id
-        grouped[assignee_id][:project_ids] << issue.project_id.to_s if issue.project_id.present?
+        grouped[assignee_id][:name] ||= assignee_name if assignee_id
+        grouped[assignee_id][:project_ids] << project_id.to_s if project_id.present?
       end
 
       grouped.values.map do |entry|
@@ -155,6 +171,20 @@ module RedmineCanvasGantt
         }
       end.sort_by do |entry|
         [entry[:id].nil? ? 0 : 1, entry[:name].to_s.downcase]
+      end
+    end
+
+    def assignee_candidate_values(candidate)
+      if candidate.is_a?(Hash)
+        [
+          candidate[:id] || candidate['id'],
+          candidate[:project_id] || candidate['project_id'],
+          candidate[:name] || candidate['name']
+        ]
+      else
+        return [nil, nil, nil] unless candidate.respond_to?(:assigned_to_id)
+
+        [candidate.assigned_to_id, candidate.project_id, candidate.assigned_to&.name]
       end
     end
 

@@ -1,3 +1,5 @@
+require_relative 'spent_hours_preloader'
+
 module RedmineCanvasGantt
   class QueryStateResolver
     QueryResolution = Struct.new(:issue_scope, :query, :query_id, keyword_init: true)
@@ -523,6 +525,12 @@ module RedmineCanvasGantt
                else
                  scope.to_a
                end
+      # Both sorting by spent time and serializing the payload read
+      # Issue#spent_hours, which is a per-record SUM unless the collection is
+      # preloaded. This is where the records are loaded, so it is where the
+      # preload belongs; the serializer stays free of queries.
+      SpentHoursPreloader.call(issues, @current_user)
+
       sort_issues!(issues, state[:sort_config])
       issues
     end
