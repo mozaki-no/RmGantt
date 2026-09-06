@@ -1,11 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Task, Viewport } from '../types';
 import { RelationType } from '../types/constraints';
 import type { Relation } from '../types';
 import {
     buildRelationRenderContext,
     buildRelationRoutePoints,
-    clearRelationIndexCache,
     distanceToPolyline,
     getPolylineMidpoint,
     normalizeRelationForRendering,
@@ -162,10 +161,6 @@ describe('selectRoutableRelations', () => {
         id, from, to, type: RelationType.Precedes
     });
 
-    beforeEach(() => {
-        clearRelationIndexCache();
-    });
-
     const contextFor = (ids: string[]) => buildRelationRenderContext(
         ids.map((id, index) => buildTask(id, 0, DAY_MS, index)),
         viewport,
@@ -236,5 +231,37 @@ describe('selectRoutableRelations', () => {
 
         const second = [relation('r2', 'b', 'c')];
         expect(selectRoutableRelations(second, context).map((entry) => entry.id)).toEqual(['r2']);
+    });
+
+    it('keeps both datasets indexed when two are rendered alternately', () => {
+        // The index is internal, so it is observed the only way it shows from
+        // the outside: an array that is mutated in place (which callers never
+        // do - TaskStore replaces the array) keeps serving its cached index.
+        // A single-slot cache would evict A when B was selected and pick the
+        // mutation up on the way back, so seeing the stale result is what
+        // proves A's entry survived the switch.
+        const context = contextFor(['a', 'b', 'c']);
+        const datasetA = [
+            relation('a1', 'a', 'b'),
+            relation('a2', 'b', 'c'),
+            relation('a3', 'c', 'a'),
+            relation('a4', 'a', 'c')
+        ];
+        const datasetB = [
+            relation('b1', 'b', 'a'),
+            relation('b2', 'c', 'b'),
+            relation('b3', 'a', 'c'),
+            relation('b4', 'c', 'a')
+        ];
+
+        expect(selectRoutableRelations(datasetA, context).map((entry) => entry.id))
+            .toEqual(['a1', 'a2', 'a3', 'a4']);
+        expect(selectRoutableRelations(datasetB, context).map((entry) => entry.id))
+            .toEqual(['b1', 'b2', 'b3', 'b4']);
+
+        datasetA.push(relation('a5', 'a', 'b'));
+
+        expect(selectRoutableRelations(datasetA, context).map((entry) => entry.id))
+            .toEqual(['a1', 'a2', 'a3', 'a4']);
     });
 });

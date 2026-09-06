@@ -56,21 +56,20 @@ export const buildRelationRenderContext = (
     return { taskById, rectById, allRects, obstacleRects };
 };
 
-type RelationIndexCache = {
-    relations: Relation[];
-    byTaskId: Map<string, number[]>;
-};
-
-let relationIndexCache: RelationIndexCache | null = null;
+const relationIndexCache = new WeakMap<Relation[], Map<string, number[]>>();
 
 /**
  * Maps a task id to the positions of the relations that touch it, memoized on
  * the identity of the relations array. TaskStore replaces that array whenever
  * relations actually change, so panning and scrolling reuse the index.
+ *
+ * The cache is keyed on the array itself rather than held in a single slot,
+ * so several datasets rendered alternately each keep their own entry instead
+ * of evicting one another. Entries go away with the array.
  */
 const getRelationIndex = (relations: Relation[]): Map<string, number[]> => {
-    const cached = relationIndexCache;
-    if (cached && cached.relations === relations) return cached.byTaskId;
+    const cached = relationIndexCache.get(relations);
+    if (cached) return cached;
 
     const byTaskId = new Map<string, number[]>();
     const push = (taskId: string, position: number) => {
@@ -87,12 +86,8 @@ const getRelationIndex = (relations: Relation[]): Map<string, number[]> => {
         if (relation.to !== relation.from) push(relation.to, position);
     });
 
-    relationIndexCache = { relations, byTaskId };
+    relationIndexCache.set(relations, byTaskId);
     return byTaskId;
-};
-
-export const clearRelationIndexCache = (): void => {
-    relationIndexCache = null;
 };
 
 /**
