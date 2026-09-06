@@ -71,13 +71,15 @@ module RedmineCanvasGantt
       'subproject_id' => %w[* !*]
     }.freeze
 
-    def initialize(project:, params:, current_user:, issue_scope:, issue_includes:, data_payload_budget: nil)
+    def initialize(project:, params:, current_user:, issue_scope:, issue_includes:,
+                   data_payload_budget: nil, spent_hours_preloader: SpentHoursPreloader)
       @project = project
       @params = params
       @current_user = current_user
       @issue_scope = issue_scope
       @issue_includes = issue_includes
       @data_payload_budget = data_payload_budget
+      @spent_hours_preloader = spent_hours_preloader
       @warnings = []
     end
 
@@ -529,7 +531,7 @@ module RedmineCanvasGantt
       # Issue#spent_hours, which is a per-record SUM unless the collection is
       # preloaded. This is where the records are loaded, so it is where the
       # preload belongs; the serializer stays free of queries.
-      SpentHoursPreloader.call(issues, @current_user)
+      @spent_hours_preloader.call(issues, @current_user)
 
       sort_issues!(issues, state[:sort_config])
       issues

@@ -8,6 +8,27 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     scope
   end
 
+  # Every example needs the same four collaborators; only params and the
+  # occasional budget or preloader vary. Constructing through here keeps the
+  # preloader an explicit choice per example rather than a file-wide stub.
+  def build_resolver(**overrides)
+    described_class.new(
+      **{
+        project: project,
+        params: ActionController::Parameters.new,
+        current_user: current_user,
+        issue_scope: issue_scope,
+        issue_includes: issue_includes
+      }.merge(overrides)
+    )
+  end
+
+  # A preloader that does nothing, for examples that materialise issues but are
+  # not about preloading. Opting in per example - rather than stubbing the real
+  # preloader for the whole file - keeps a later example that ought to exercise
+  # preloading from silently not doing so.
+  let(:null_spent_hours_preloader) { class_double(RedmineCanvasGantt::SpentHoursPreloader, call: nil) }
+
   let(:project) { instance_double(Project, id: 1) }
   let(:current_user) { instance_double(User, id: 5) }
   let(:issue_scope) { double('IssueScope') }
@@ -58,20 +79,10 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(issue_scope).to receive(:where).and_return(issue_scope)
     allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
     allow(issue_scope).to receive(:to_a).and_return([])
-    # These examples cover query-state resolution against injected doubles.
-    # Preloading reaches the real TimeEntry visibility scope, and has its own
-    # describe block below.
-    allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
   end
 
   it 'extracts supported shared state and applies url overrides' do
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -93,12 +104,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   end
 
   it 'accepts group_by none without warning and disables both grouping modes' do
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(group_by: 'none'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(group_by: 'none')
     )
 
     result = resolver.resolve(project_ids: [1, 2])
@@ -113,13 +120,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'warns and falls back when query_id is invalid' do
     allow(IssueQuery).to receive(:find_by).with(id: '42').and_return(nil)
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -158,13 +159,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(open_status_relation).to receive(:pluck).with(:id).and_return([1, 2])
     allow(issue_scope).to receive(:or).with(issue_scope).and_return(issue_scope)
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -200,13 +195,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       op: { 'tracker_id' => '*' }
     )
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -236,12 +225,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect(working_query).to receive(:filters=).with(query.filters)
     allow(working_query).to receive(:column_names).and_return([])
 
-    result = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '103'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    result = build_resolver(
+      params: ActionController::Parameters.new(query_id: '103')
     ).resolve(project_ids: [1, 2])
 
     expect(result[:initial_state][:selected_tracker_ids]).to eq([])
@@ -270,12 +255,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(working_query).to receive(:filters=)
     allow(working_query).to receive(:column_names).and_return([])
 
-    result = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '104'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    result = build_resolver(
+      params: ActionController::Parameters.new(query_id: '104')
     ).resolve(project_ids: [1, 2])
 
     expect(result[:initial_state][:selected_tracker_ids]).to eq([3, 4])
@@ -289,12 +270,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(filtered_scope).to receive(:includes).with(*issue_includes).and_return(filtered_scope)
     allow(filtered_scope).to receive(:to_a).and_return([])
 
-    result = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(tracker_ids: ['3', '4']),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    result = build_resolver(
+      params: ActionController::Parameters.new(tracker_ids: ['3', '4'])
     ).resolve(project_ids: [1, 2])
 
     expect(result[:initial_state][:selected_tracker_ids]).to eq([3, 4])
@@ -328,18 +305,14 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect(issue_scope).to receive(:where).with(project_id: [1]).and_return(issue_scope)
     expect(issue_scope).to receive(:where).with(id: [23]).and_return(issue_scope)
 
-    resolver = described_class.new(
-      project: project,
+    resolver = build_resolver(
       params: ActionController::Parameters.new(
         query_id: '102',
         set_filter: '1',
         f: ['subproject_id'],
         op: { 'subproject_id' => '!*' },
         show_subprojects: '0'
-      ),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+      )
     )
 
     result = resolver.resolve(project_ids: [1, 2])
@@ -350,13 +323,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'splits comma and pipe separated Canvas project ids from url params' do
     params = ActionController::Parameters.new(canvas_project_ids: ['9|10', '11,12', '12'])
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -367,13 +334,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     params = ActionController::Parameters.new(canvas_project_ids: ['none'])
     expect(issue_scope).to receive(:where).with(project_id: []).and_return(issue_scope)
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -407,12 +368,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(working_query).to receive(:filters=)
     allow(working_query).to receive(:column_names).and_return([])
 
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '99'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(query_id: '99')
     )
 
     result = resolver.resolve(project_ids: [1, 2])
@@ -451,12 +408,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect(issue_scope).to receive(:where).with(project_id: [1, 2, 3]).and_return(issue_scope)
     expect(issue_scope).to receive(:where).with(id: [22]).and_return(issue_scope)
 
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '101'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(query_id: '101')
     )
 
     result = resolver.resolve(project_ids: [1, 2, 3])
@@ -493,12 +446,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(working_query).to receive(:filters=)
     allow(working_query).to receive(:column_names).and_return([])
 
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '100'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(query_id: '100')
     )
 
     result = resolver.resolve(project_ids: [1, 2])
@@ -509,13 +458,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'normalizes version none overrides to _none' do
     params = ActionController::Parameters.new(fixed_version_id: ['none'])
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -525,13 +468,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'preserves assignee none overrides as nil' do
     params = ActionController::Parameters.new(assigned_to_id: ['none'])
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -541,13 +478,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'preserves assignee none overrides from Canvas plural params as nil' do
     params = ActionController::Parameters.new(assigned_to_ids: ['none'])
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -557,13 +488,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'normalizes version none overrides from Canvas plural params to _none' do
     params = ActionController::Parameters.new(fixed_version_ids: ['none'])
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -603,12 +528,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect(filtered_scope).to receive(:includes).with(*issue_includes).and_return(filtered_scope)
     allow(filtered_scope).to receive(:to_a).and_return([])
 
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '100'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(query_id: '100')
     )
 
     resolver.resolve(project_ids: [1, 2])
@@ -627,13 +548,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       sort: 'start_date:asc'
     )
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -657,12 +572,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'extracts visible columns from saved query column names' do
     allow(working_query).to receive(:column_names).and_return(%w[subject assigned_to fixed_version cf_101 unknown])
 
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '42'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(query_id: '42')
     )
 
     result = resolver.resolve(project_ids: [1, 2])
@@ -673,12 +584,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'applies c params as visible column overrides' do
     allow(working_query).to receive(:column_names).and_return(%w[subject assigned_to])
 
-    resolver = described_class.new(
-      project: project,
-      params: ActionController::Parameters.new(query_id: '42', c: %w[status start_date cf_101 notification]),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
+    resolver = build_resolver(
+      params: ActionController::Parameters.new(query_id: '42', c: %w[status start_date cf_101 notification])
     )
 
     result = resolver.resolve(project_ids: [1, 2])
@@ -689,13 +596,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   it 'parses member_projects_only from url params' do
     params = ActionController::Parameters.new(member_projects_only: '1')
 
-    resolver = described_class.new(
-      project: project,
-      params: params,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes
-    )
+    resolver = build_resolver(params: params)
 
     result = resolver.resolve(project_ids: [1, 2])
 
@@ -706,12 +607,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
 
   it 'uses the data budget before materializing the resolved issue scope' do
     budget = instance_double(RedmineCanvasGantt::DataPayloadBudget, issue_limit: 10_000)
-    resolver = described_class.new(
-      project: project,
+    resolver = build_resolver(
       params: ActionController::Parameters.new,
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes,
       data_payload_budget: budget
     )
     allow(resolver).to receive(:issues_scope_for).and_return(issue_scope)
@@ -747,13 +644,10 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       .with(issue_scope, resource: 'issues', limit: 10_000)
       .and_return(final_issues)
 
-    result = described_class.new(
-      project: project,
+    result = build_resolver(
       params: ActionController::Parameters.new(query_id: '42', tracker_ids: ['3']),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes,
-      data_payload_budget: budget
+      data_payload_budget: budget,
+      spent_hours_preloader: null_spent_hours_preloader
     ).resolve(project_ids: [1, 2])
 
     expect(result[:issues]).to eq(final_issues)
@@ -768,12 +662,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     )
     expect(budget).to receive(:load_records).and_raise(overflow)
 
-    resolver = described_class.new(
-      project: project,
+    resolver = build_resolver(
       params: ActionController::Parameters.new(query_id: '42'),
-      current_user: current_user,
-      issue_scope: issue_scope,
-      issue_includes: issue_includes,
       data_payload_budget: budget
     )
 
@@ -781,6 +671,10 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   end
 
   describe 'spent time preloading' do
+    # The preloader is injected rather than stubbed on the constant, so these
+    # examples assert against the collaborator the resolver was handed.
+    let(:preloader) { class_double(RedmineCanvasGantt::SpentHoursPreloader, call: nil) }
+
     def build_issue(id, spent_hours)
       instance_double(Issue, id: id, start_date: nil, spent_hours: spent_hours)
     end
@@ -790,20 +684,22 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
       allow(issue_scope).to receive(:to_a).and_return(issues)
 
-      described_class.new(
-        project: project,
+      build_resolver(
         params: ActionController::Parameters.new(extra_params),
-        current_user: current_user,
-        issue_scope: issue_scope,
-        issue_includes: issue_includes
+        spent_hours_preloader: preloader
       ).resolve(project_ids: [1])
+    end
+
+    it 'defaults to the real preloader when none is injected' do
+      expect(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call).with([], current_user)
+
+      build_resolver.resolve(project_ids: [1])
     end
 
     it 'preloads the loaded collection once, where the records are loaded' do
       issues = [build_issue(1, 0.0), build_issue(2, 0.0)]
 
-      expect(RedmineCanvasGantt::SpentHoursPreloader)
-        .to receive(:call).with(issues, current_user).once
+      expect(preloader).to receive(:call).with(issues, current_user).once
 
       resolve_with(issues)
     end
@@ -812,7 +708,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       call_order = []
       issues = [build_issue(1, 5.0), build_issue(2, 1.0)]
 
-      allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call) { call_order << :preload }
+      allow(preloader).to receive(:call) { call_order << :preload }
       issues.each do |issue|
         allow(issue).to receive(:spent_hours) do
           call_order << :read
@@ -826,7 +722,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     end
 
     it 'delegates the empty case to the preloader rather than branching here' do
-      expect(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call).with([], current_user)
+      expect(preloader).to receive(:call).with([], current_user)
 
       resolve_with([])
     end
