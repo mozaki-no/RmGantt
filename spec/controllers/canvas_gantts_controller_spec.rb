@@ -328,9 +328,9 @@ RSpec.describe CanvasGanttsController, type: :controller do
       end
       allow(controller).to receive(:descendant_project_ids).and_return([1, 2])
       filter_option_project = double('ProjectOption', id: 1, name: 'Demo')
-      filter_option_issue = double('FilterOptionIssue')
+      filter_option_assignee = { id: 7, project_id: 1, name: 'Alice' }
       allow(controller).to receive(:filter_option_projects).with([1, 2], member_projects_only: false).and_return([filter_option_project])
-      allow(controller).to receive(:filter_option_issues).with([1, 2]).and_return([filter_option_issue])
+      allow(controller).to receive(:filter_option_assignees).with([1, 2]).and_return([filter_option_assignee])
       allow(controller).to receive(:query_state_resolver).and_return(resolver)
       allow(controller).to receive(:baseline_repository).and_return(baseline_repository)
       allow(controller).to receive(:visible_baseline_snapshot).with(baseline_snapshot, [1, 2]).and_return(baseline_snapshot)
@@ -354,7 +354,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
         project_ids: [1, 2],
         issues: [issue],
         filter_option_projects: [filter_option_project],
-        filter_option_issues: [filter_option_issue],
+        filter_option_assignees: [filter_option_assignee],
         initial_state: { query_id: 7 },
         query_context: { query_id: 7, explicit_overrides: {} },
         warnings: ['Invalid query_id ignored', 'Baseline warning'],
@@ -396,7 +396,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
       baseline_repository = instance_double(RedmineCanvasGantt::BaselineRepository)
       resolver = instance_double(RedmineCanvasGantt::QueryStateResolver)
       filter_option_project = double('ProjectOption', id: 1, name: 'Demo')
-      filter_option_issue = double('FilterOptionIssue')
+      filter_option_assignee = { id: 7, project_id: 1, name: 'Alice' }
       issue = double('Issue', id: 10, project_id: 1)
 
       allow(controller).to receive(:set_permissions) do
@@ -404,7 +404,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
       end
       allow(controller).to receive(:descendant_project_ids).and_return([1, 2])
       allow(controller).to receive(:filter_option_projects).with([1, 2], member_projects_only: true).and_return([filter_option_project])
-      allow(controller).to receive(:filter_option_issues).with([1, 2]).and_return([filter_option_issue])
+      allow(controller).to receive(:filter_option_assignees).with([1, 2]).and_return([filter_option_assignee])
       allow(controller).to receive(:query_state_resolver).and_return(resolver)
       allow(controller).to receive(:baseline_repository).and_return(baseline_repository)
       allow(resolver).to receive(:resolve).and_return({

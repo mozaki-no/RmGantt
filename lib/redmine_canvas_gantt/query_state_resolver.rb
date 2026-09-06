@@ -1,3 +1,5 @@
+require_relative 'spent_hours_preloader'
+
 module RedmineCanvasGantt
   class QueryStateResolver
     QueryResolution = Struct.new(:issue_scope, :query, :query_id, keyword_init: true)
@@ -523,6 +525,12 @@ module RedmineCanvasGantt
                else
                  scope.to_a
                end
+      # Sorting by spent time reads Issue#spent_hours, which is a per-record
+      # SUM unless the collection is preloaded first.
+      if state[:sort_config].present? && state[:sort_config][:key] == 'spentHours'
+        SpentHoursPreloader.call(issues, @current_user)
+      end
+
       sort_issues!(issues, state[:sort_config])
       issues
     end

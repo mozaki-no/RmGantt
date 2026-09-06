@@ -466,7 +466,7 @@ class CanvasGanttsController < ApplicationController
           filter_option_projects(project_ids, member_projects_only: member_projects_only),
           resource: 'projects'
         ),
-        filter_option_issues: filter_option_issues(project_ids),
+        filter_option_assignees: filter_option_assignees(project_ids),
         filter_option_trackers: bounded_data_collection(
           filter_option_trackers(project_ids),
           resource: 'trackers'
@@ -967,15 +967,28 @@ class CanvasGanttsController < ApplicationController
     )
   end
 
-  def filter_option_issues(project_ids)
-    scope = Issue.visible.where(project_id: project_ids)
-      .select(:id, :assigned_to_id, :project_id)
-      .includes(:assigned_to)
-    data_payload_budget.load_records(
-      scope,
-      resource: 'filter_issues',
-      limit: data_payload_budget.issue_limit
-    )
+  # Assignee candidates are independent from the filtered task collection and
+  # must not require materializing every visible Issue.  Issue.visible remains
+  # the permission boundary; the distinct projection is O(assignee-project
+  # memberships), and principal names are resolved with one extra query.
+  def filter_option_assignees(project_ids)
+    pairs = Issue.visible
+      .where(project_id: project_ids)
+      .distinct
+      .limit(data_payload_budget.collection_limit + 1)
+      .pluck(:assigned_to_id, :project_id)
+    data_payload_budget.ensure_count!(pairs, resource: 'assignees')
+
+    principal_ids = pairs.filter_map(&:first).uniq
+    principals_by_id = principal_ids.empty? ? {} : Principal.where(id: principal_ids).index_by(&:id)
+
+    pairs.map do |assigned_to_id, project_id|
+      {
+        id: assigned_to_id,
+        project_id: project_id,
+        name: assigned_to_id && principals_by_id[assigned_to_id]&.name
+      }
+    end
   end
 
   # Keep tracker candidates independent from the filtered task collection and

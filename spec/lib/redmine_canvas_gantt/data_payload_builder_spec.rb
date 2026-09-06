@@ -32,7 +32,7 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         project_ids: [1, 2],
         issues: [],
         filter_option_projects: [child_project, root_project],
-        filter_option_issues: [issue_a, issue_b, issue_c],
+        filter_option_assignees: [issue_a, issue_b, issue_c],
         business_calendar: { status: 'ok', revision: 'revision' }
       )
 
@@ -72,7 +72,7 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         project_ids: [1, 2],
         issues: [],
         filter_option_projects: [],
-        filter_option_issues: [],
+        filter_option_assignees: [],
         filter_option_trackers: candidates
       )
 
@@ -80,6 +80,126 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         { id: 3, name: 'Bug', project_ids: %w[1 2] },
         { id: 4, name: 'Feature', project_ids: ['2'] }
       ])
+    end
+  end
+
+  describe '#build_assignee_options' do
+    let(:builder) do
+      described_class.new(
+        custom_field_extractor: instance_double(RedmineCanvasGantt::CustomFieldExtractor),
+        current_user: instance_double(User)
+      )
+    end
+
+    it 'accepts the distinct (assigned_to_id, project_id) projection' do
+      candidates = [
+        { id: 7, project_id: 1, name: 'Alice' },
+        { id: 8, project_id: 2, name: 'Bob' },
+        { id: 7, project_id: 2, name: 'Alice' },
+        { id: nil, project_id: 2, name: nil }
+      ]
+
+      expect(builder.build_assignee_options(candidates)).to eq([
+        { id: nil, name: nil, project_ids: ['2'] },
+        { id: 7, name: 'Alice', project_ids: %w[1 2] },
+        { id: 8, name: 'Bob', project_ids: ['2'] }
+      ])
+    end
+
+    it 'still accepts issue-like records so existing callers keep working' do
+      alice = instance_double(User, name: 'Alice')
+      issue = instance_double(Issue, assigned_to_id: 7, assigned_to: alice, project_id: 1)
+
+      expect(builder.build_assignee_options([issue])).to eq([
+        { id: 7, name: 'Alice', project_ids: ['1'] }
+      ])
+    end
+  end
+
+  describe '#build_tasks' do
+    it 'preloads spent hours once instead of one SUM per issue' do
+      current_user = instance_double(User)
+      extractor = instance_double(RedmineCanvasGantt::CustomFieldExtractor)
+      builder = described_class.new(custom_field_extractor: extractor, current_user: current_user)
+
+      project = instance_double(Project, id: 1, name: 'Root')
+      issues = Array.new(3) do |index|
+        instance_double(
+          Issue,
+          id: index + 1, subject: "Task", project_id: 1, project: project,
+          start_date: nil, due_date: nil, done_ratio: 0,
+          status_id: 1, status: instance_double(IssueStatus, name: 'New'),
+          assigned_to_id: nil, assigned_to: nil, parent_id: nil, lock_version: 0,
+          tracker_id: 1, tracker: nil, fixed_version_id: nil, fixed_version: nil,
+          priority_id: 1, priority: nil, author_id: 1, author: nil,
+          category_id: nil, category: nil, estimated_hours: nil,
+          created_on: nil, updated_on: nil, spent_hours: 0.0, editable?: true
+        )
+      end
+
+      allow(extractor).to receive(:build_task_custom_field_values).and_return({})
+      allow(current_user).to receive(:allowed_to?).and_return(true)
+      expect(RedmineCanvasGantt::SpentHoursPreloader)
+        .to receive(:call).with(issues, current_user).once
+
+      builder.build_tasks(issues)
+    end
+
+    it 'resolves :edit_issues once per project rather than once per issue' do
+      current_user = instance_double(User)
+      extractor = instance_double(RedmineCanvasGantt::CustomFieldExtractor)
+      builder = described_class.new(custom_field_extractor: extractor, current_user: current_user)
+
+      project = instance_double(Project, id: 1, name: 'Root')
+      issues = Array.new(5) do |index|
+        instance_double(
+          Issue,
+          id: index + 1, subject: "Task", project_id: 1, project: project,
+          start_date: nil, due_date: nil, done_ratio: 0,
+          status_id: 1, status: instance_double(IssueStatus, name: 'New'),
+          assigned_to_id: nil, assigned_to: nil, parent_id: nil, lock_version: 0,
+          tracker_id: 1, tracker: nil, fixed_version_id: nil, fixed_version: nil,
+          priority_id: 1, priority: nil, author_id: 1, author: nil,
+          category_id: nil, category: nil, estimated_hours: nil,
+          created_on: nil, updated_on: nil, spent_hours: 0.0, editable?: true
+        )
+      end
+
+      allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
+      allow(extractor).to receive(:build_task_custom_field_values).and_return({})
+      expect(current_user).to receive(:allowed_to?).with(:edit_issues, project).once.and_return(true)
+      expect(current_user).to receive(:allowed_to?).with(:log_time, project).once.and_return(true)
+
+      tasks = builder.build_tasks(issues)
+
+      expect(tasks.map { |task| task[:editable] }).to all(be(true))
+    end
+
+    it 'skips Issue#editable? entirely when the project denies :edit_issues' do
+      current_user = instance_double(User)
+      extractor = instance_double(RedmineCanvasGantt::CustomFieldExtractor)
+      builder = described_class.new(custom_field_extractor: extractor, current_user: current_user)
+
+      project = instance_double(Project, id: 1, name: 'Root')
+      issue = instance_double(
+        Issue,
+        id: 1, subject: 'Task', project_id: 1, project: project,
+        start_date: nil, due_date: nil, done_ratio: 0,
+        status_id: 1, status: instance_double(IssueStatus, name: 'New'),
+        assigned_to_id: nil, assigned_to: nil, parent_id: nil, lock_version: 0,
+        tracker_id: 1, tracker: nil, fixed_version_id: nil, fixed_version: nil,
+        priority_id: 1, priority: nil, author_id: 1, author: nil,
+        category_id: nil, category: nil, estimated_hours: nil,
+        created_on: nil, updated_on: nil, spent_hours: 0.0
+      )
+
+      allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
+      allow(extractor).to receive(:build_task_custom_field_values).and_return({})
+      allow(current_user).to receive(:allowed_to?).with(:edit_issues, project).and_return(false)
+      allow(current_user).to receive(:allowed_to?).with(:log_time, project).and_return(false)
+      expect(issue).not_to receive(:editable?)
+
+      expect(builder.build_tasks([issue]).first[:editable]).to be(false)
     end
   end
 
