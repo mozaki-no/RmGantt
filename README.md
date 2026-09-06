@@ -392,3 +392,13 @@ For live frontend development:
 cd spa
 npm run dev
 ```
+
+## License and fork status
+
+This repository is a fork of
+[tiohsa/redmine_canvas_gantt](https://github.com/tiohsa/redmine_canvas_gantt)
+and stays under **GPL-2.0-only**, the same license as upstream and as Redmine
+itself. Using and modifying it inside your own organisation carries no
+publication obligation; those obligations begin only if you distribute the
+plugin outside your legal entity. See [NOTICE.md](NOTICE.md) for the details
+and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for bundled fonts.

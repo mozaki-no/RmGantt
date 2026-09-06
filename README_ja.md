@@ -403,3 +403,12 @@ npm run test -- --run
 cd spa
 npm run dev
 ```
+
+## ライセンスと fork について
+
+本リポジトリは
+[tiohsa/redmine_canvas_gantt](https://github.com/tiohsa/redmine_canvas_gantt)
+の fork であり、上流および Redmine 本体と同じ **GPL-2.0-only** のままです。
+自組織内での利用・改変に公開義務はなく、義務が生じるのは法人の外部へ
+プラグインを配布する場合のみです。詳細は [NOTICE.md](NOTICE.md)、同梱フォントに
+ついては [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) を参照してください。
