@@ -51,8 +51,16 @@ export function routeDependencyFS(
     obstacles: Rect[],
     viewport: ViewportLike,
     context: RouteContext,
-    params: RouteParams = DEFAULT_PARAMS
+    params: RouteParams = DEFAULT_PARAMS,
+    // Callers that reuse one obstacle array across many relations pass the two
+    // endpoint rects here instead of filtering the array per relation.
+    excludedA?: Rect,
+    excludedB?: Rect
 ): Point[] {
+    const pathIntersects = (points: Point[]): boolean => (
+        pathIntersectsAny(points, obstacles, excludedA, excludedB)
+    );
+
     const fromPort = getPort(fromRect, 'RIGHT_CENTER');
     const toPort = getPort(toRect, 'LEFT_CENTER');
 
@@ -90,7 +98,7 @@ export function routeDependencyFS(
             { x: dropX, y: toPort.y },
             toPort
         ];
-        if (!pathIntersectsAny(directRoute, obstacles)) {
+        if (!pathIntersects(directRoute)) {
             return directRoute;
         }
     }
@@ -98,7 +106,7 @@ export function routeDependencyFS(
     const boundaryY = pickRowBoundary(context);
     const basePoints = simplifyOrthogonal(buildRouteViaBoundary(fromPort, toPort, params, boundaryY));
 
-    if (!pathIntersectsAny(basePoints, obstacles)) {
+    if (!pathIntersects(basePoints)) {
         return basePoints;
     }
 
@@ -110,7 +118,7 @@ export function routeDependencyFS(
             params,
             boundaryY + offset
         ));
-        if (!pathIntersectsAny(shiftedPoints, obstacles)) {
+        if (!pathIntersects(shiftedPoints)) {
             return shiftedPoints;
         }
     }
@@ -118,7 +126,7 @@ export function routeDependencyFS(
     const bypassCandidates = buildBypassCandidates(viewport, context.rowHeight);
     for (const safeY of bypassCandidates) {
         const bypassPoints = simplifyOrthogonal(buildRouteViaBoundary(fromPort, toPort, params, safeY));
-        if (!pathIntersectsAny(bypassPoints, obstacles)) {
+        if (!pathIntersects(bypassPoints)) {
             return bypassPoints;
         }
     }
@@ -130,7 +138,7 @@ export function routeDependencyFS(
         inset: params.inset + stretch
     };
     const stretchedPoints = simplifyOrthogonal(buildRouteViaBoundary(fromPort, toPort, stretchedParams, boundaryY));
-    if (!pathIntersectsAny(stretchedPoints, obstacles)) {
+    if (!pathIntersects(stretchedPoints)) {
         return stretchedPoints;
     }
 
@@ -190,9 +198,10 @@ function buildRouteViaBoundary(
     ];
 }
 
-function pathIntersectsAny(points: Point[], obstacles: Rect[]): boolean {
+function pathIntersectsAny(points: Point[], obstacles: Rect[], excludedA?: Rect, excludedB?: Rect): boolean {
     const segments = toSegments(points);
     for (const rect of obstacles) {
+        if (rect === excludedA || rect === excludedB) continue;
         for (const segment of segments) {
             if (segmentIntersectsRect(segment.from, segment.to, rect)) {
                 return true;

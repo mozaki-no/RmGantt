@@ -245,7 +245,9 @@ export const UiSidebar: React.FC = () => {
     }, [tasks]);
 
     const [startRow, endRow] = LayoutEngine.getVisibleRowRange(viewport, rowCount || tasks.length);
-    const visibleRows = layoutRows.filter(row => row.rowIndex >= startRow && row.rowIndex <= endRow);
+    // Binary search rather than a full scan: this runs on every scroll frame,
+    // and layoutRows holds one entry per row in the whole chart.
+    const visibleRows = LayoutEngine.sliceLayoutRowsInRowRange(layoutRows, startRow, endRow);
 
     const closedStatusIds = React.useMemo(
         () => new Set(taskStatuses.filter(status => status.isClosed).map(status => status.id)),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { LayoutEngine } from './LayoutEngine';
-import type { Viewport, Task } from '../types';
+import type { Viewport, Task, LayoutRow } from '../types';
 import { parseDateOnly, toTimelineDate } from '../utils/dateOnly';
 
 describe('LayoutEngine', () => {
@@ -222,5 +222,45 @@ describe('LayoutEngine', () => {
         expect(LayoutEngine.sliceTasksInRowRange(tasks, 2, 5).map(t => t.id)).toEqual(['b', 'c']);
         expect(LayoutEngine.sliceTasksInRowRange(tasks, 6, 10)).toEqual([]);
         expect(LayoutEngine.sliceTasksInRowRange(tasks, 4, 3)).toEqual([]);
+    });
+});
+
+describe('LayoutEngine.sliceLayoutRowsInRowRange', () => {
+    const rows: LayoutRow[] = [
+        { type: 'header', projectId: 'p1', projectName: 'P1', groupKind: 'project', rowIndex: 0 },
+        { type: 'task', taskId: 't1', rowIndex: 1 },
+        { type: 'task', taskId: 't2', rowIndex: 2 },
+        { type: 'header', projectId: 'p2', projectName: 'P2', groupKind: 'project', rowIndex: 3 },
+        { type: 'task', taskId: 't3', rowIndex: 4 }
+    ];
+
+    const bruteForce = (startRow: number, endRow: number) => (
+        rows.filter((row) => row.rowIndex >= startRow && row.rowIndex <= endRow)
+    );
+
+    it('matches a full scan for every window', () => {
+        for (let start = -2; start <= 7; start += 1) {
+            for (let end = -2; end <= 7; end += 1) {
+                expect(LayoutEngine.sliceLayoutRowsInRowRange(rows, start, end))
+                    .toEqual(bruteForce(start, end));
+            }
+        }
+    });
+
+    it('returns an empty slice for an inverted or empty range', () => {
+        expect(LayoutEngine.sliceLayoutRowsInRowRange(rows, 3, 1)).toEqual([]);
+        expect(LayoutEngine.sliceLayoutRowsInRowRange([], 0, 10)).toEqual([]);
+    });
+
+    it('reads only a slice of a large layout', () => {
+        const many: LayoutRow[] = Array.from({ length: 20_000 }, (_, index) => ({
+            type: 'task', taskId: `t${index}`, rowIndex: index
+        }));
+
+        const slice = LayoutEngine.sliceLayoutRowsInRowRange(many, 12_000, 12_029);
+
+        expect(slice).toHaveLength(30);
+        expect(slice[0].rowIndex).toBe(12_000);
+        expect(slice[29].rowIndex).toBe(12_029);
     });
 });

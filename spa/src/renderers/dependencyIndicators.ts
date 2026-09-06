@@ -12,6 +12,35 @@ export type SelectedRelations = {
 
 export const MAX_SELECTED_RELATIONS = 5;
 
+type DependencySummaryCache = {
+    tasks: Task[];
+    relations: Relation[];
+    summary: Map<string, DependencySummary>;
+};
+
+let dependencySummaryCache: DependencySummaryCache | null = null;
+
+/**
+ * Same result as `buildDependencySummary`, memoized on the identity of the
+ * task and relation arrays. Both are rebuilt by TaskStore's layout pass and
+ * are otherwise stable, so scrolling and panning reuse the cached summary
+ * instead of re-walking every task and relation on each frame.
+ */
+export const getDependencySummary = (tasks: Task[], relations: Relation[]): Map<string, DependencySummary> => {
+    const cached = dependencySummaryCache;
+    if (cached && cached.tasks === tasks && cached.relations === relations) {
+        return cached.summary;
+    }
+
+    const summary = buildDependencySummary(tasks, relations);
+    dependencySummaryCache = { tasks, relations, summary };
+    return summary;
+};
+
+export const clearDependencySummaryCache = (): void => {
+    dependencySummaryCache = null;
+};
+
 export const buildDependencySummary = (tasks: Task[], relations: Relation[]): Map<string, DependencySummary> => {
     const summary = new Map<string, DependencySummary>();
     const taskIds = new Set(tasks.map(task => task.id));
