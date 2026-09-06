@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Task } from '../types';
 import {
     buildDependencySummary,
-    clearDependencySummaryCache,
     filterRelationsForSelected,
     getDependencySummary,
     getOverflowBadgeLabel
@@ -63,10 +62,6 @@ describe('getOverflowBadgeLabel', () => {
 });
 
 describe('getDependencySummary', () => {
-    beforeEach(() => {
-        clearDependencySummaryCache();
-    });
-
     it('returns the same result as an uncached build', () => {
         const tasks = [buildTask('a'), buildTask('b'), buildTask('c')];
         const relations = [
@@ -101,5 +96,22 @@ describe('getDependencySummary', () => {
         const third = getDependencySummary([...tasks], nextRelations);
         expect(third).not.toBe(second);
         expect(third).toEqual(second);
+    });
+
+    it('keeps both datasets cached when two are rendered alternately', () => {
+        // A single-slot cache would evict one dataset on every switch and
+        // rebuild both on every frame. Nothing about the results would change,
+        // so identity is the only thing that shows the memoisation is alive.
+        const tasksA = [buildTask('a'), buildTask('b')];
+        const relationsA = [{ id: 'r1', from: 'a', to: 'b', type: 'precedes' }];
+        const tasksB = [buildTask('c'), buildTask('d')];
+        const relationsB = [{ id: 'r2', from: 'c', to: 'd', type: 'precedes' }];
+
+        const firstA = getDependencySummary(tasksA, relationsA);
+        const firstB = getDependencySummary(tasksB, relationsB);
+
+        expect(getDependencySummary(tasksA, relationsA)).toBe(firstA);
+        expect(getDependencySummary(tasksB, relationsB)).toBe(firstB);
+        expect(getDependencySummary(tasksA, relationsA)).toBe(firstA);
     });
 });

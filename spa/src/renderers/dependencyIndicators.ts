@@ -12,33 +12,31 @@ export type SelectedRelations = {
 
 export const MAX_SELECTED_RELATIONS = 5;
 
-type DependencySummaryCache = {
-    tasks: Task[];
-    relations: Relation[];
-    summary: Map<string, DependencySummary>;
-};
-
-let dependencySummaryCache: DependencySummaryCache | null = null;
+const dependencySummaryCache = new WeakMap<Task[], WeakMap<Relation[], Map<string, DependencySummary>>>();
 
 /**
  * Same result as `buildDependencySummary`, memoized on the identity of the
  * task and relation arrays. Both are rebuilt by TaskStore's layout pass and
  * are otherwise stable, so scrolling and panning reuse the cached summary
  * instead of re-walking every task and relation on each frame.
+ *
+ * The cache is keyed on the arrays themselves rather than held in a single
+ * slot, so several datasets rendered alternately each keep their own entry
+ * instead of evicting one another. Entries go away with the arrays.
  */
 export const getDependencySummary = (tasks: Task[], relations: Relation[]): Map<string, DependencySummary> => {
-    const cached = dependencySummaryCache;
-    if (cached && cached.tasks === tasks && cached.relations === relations) {
-        return cached.summary;
+    let byRelations = dependencySummaryCache.get(tasks);
+    if (!byRelations) {
+        byRelations = new WeakMap<Relation[], Map<string, DependencySummary>>();
+        dependencySummaryCache.set(tasks, byRelations);
     }
 
-    const summary = buildDependencySummary(tasks, relations);
-    dependencySummaryCache = { tasks, relations, summary };
-    return summary;
-};
+    const cached = byRelations.get(relations);
+    if (cached) return cached;
 
-export const clearDependencySummaryCache = (): void => {
-    dependencySummaryCache = null;
+    const summary = buildDependencySummary(tasks, relations);
+    byRelations.set(relations, summary);
+    return summary;
 };
 
 export const buildDependencySummary = (tasks: Task[], relations: Relation[]): Map<string, DependencySummary> => {
