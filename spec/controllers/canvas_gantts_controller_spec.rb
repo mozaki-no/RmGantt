@@ -244,17 +244,21 @@ RSpec.describe CanvasGanttsController, type: :controller do
   describe 'GET #asset' do
     around do |example|
       Dir.mktmpdir do |dir|
-        @tmp_root = Pathname.new(dir)
+        @asset_dir = Pathname.new(dir)
         example.run
       end
     end
 
-    before do
-      build_dir = @tmp_root.join('plugins', 'redmine_canvas_gantt', 'assets', 'build', 'assets')
-      FileUtils.mkdir_p(build_dir)
-      File.write(build_dir.join('main-C-eaXpl1.js'), 'console.log("ok");')
-      File.write(build_dir.join('vite.svg'), '<svg></svg>')
-      allow(Rails).to receive(:root).and_return(@tmp_root)
+    # Rails.root is deliberately NOT stubbed here. I18n resolves its load path
+    # lazily, so a stubbed root during a real request leaves the process with
+    # no usable locale and every later example fails. Path resolution has its
+    # own unit specs above; these cover delivery only, so the resolved path is
+    # stubbed instead.
+    def serve(name)
+      path = @asset_dir.join(name)
+      File.write(path, 'console.log("ok");') unless path.exist?
+      allow(controller).to receive(:safe_build_asset_path).and_return(path.to_s)
+      get :asset, params: { asset_path: "assets/#{name}" }
     end
 
     def cache_control
@@ -262,7 +266,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
     end
 
     it 'marks content-hashed assets immutable so they are never refetched' do
-      get :asset, params: { asset_path: 'assets/main-C-eaXpl1.js' }
+      serve('main-C-eaXpl1.js')
 
       expect(response).to have_http_status(:ok)
       expect(cache_control).to include('immutable')
@@ -270,14 +274,14 @@ RSpec.describe CanvasGanttsController, type: :controller do
     end
 
     it 'keeps hashed assets out of shared caches' do
-      get :asset, params: { asset_path: 'assets/main-C-eaXpl1.js' }
+      serve('main-C-eaXpl1.js')
 
       expect(cache_control).to include('private')
       expect(cache_control).not_to include('public')
     end
 
     it 'uses a short revalidating window for assets without a content hash' do
-      get :asset, params: { asset_path: 'assets/vite.svg' }
+      serve('vite.svg')
 
       expect(response).to have_http_status(:ok)
       expect(cache_control).to include("max-age=#{CanvasGanttsController::ASSET_MUTABLE_MAX_AGE.to_i}")
@@ -285,25 +289,27 @@ RSpec.describe CanvasGanttsController, type: :controller do
     end
 
     it 'always emits a validator so a stale entry can answer 304' do
-      get :asset, params: { asset_path: 'assets/vite.svg' }
+      serve('vite.svg')
 
       expect(response.headers['ETag']).to be_present
       expect(response.headers['Last-Modified']).to be_present
     end
 
     it 'answers 304 when the client already holds the current entity' do
-      get :asset, params: { asset_path: 'assets/vite.svg' }
+      serve('vite.svg')
       etag = response.headers['ETag']
       expect(etag).to be_present
 
       request.headers['If-None-Match'] = etag
-      get :asset, params: { asset_path: 'assets/vite.svg' }
+      serve('vite.svg')
 
       expect(response).to have_http_status(:not_modified)
     end
 
-    it 'still refuses to serve a path outside the build directory' do
-      get :asset, params: { asset_path: 'missing.js' }
+    it 'returns not found when the path does not resolve inside the build directory' do
+      allow(controller).to receive(:safe_build_asset_path).and_return(nil)
+
+      get :asset, params: { asset_path: '../config/database.yml' }
 
       expect(response).to have_http_status(:not_found)
     end

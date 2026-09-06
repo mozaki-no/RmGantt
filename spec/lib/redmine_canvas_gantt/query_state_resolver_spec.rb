@@ -58,6 +58,10 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(issue_scope).to receive(:where).and_return(issue_scope)
     allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
     allow(issue_scope).to receive(:to_a).and_return([])
+    # These examples cover query-state resolution against injected doubles.
+    # Preloading reaches the real TimeEntry visibility scope, and has its own
+    # describe block below.
+    allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
   end
 
   it 'extracts supported shared state and applies url overrides' do
@@ -778,7 +782,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
 
   describe 'spent time preloading' do
     def build_issue(id, spent_hours)
-      instance_double(Issue, id: id, spent_hours: spent_hours)
+      instance_double(Issue, id: id, start_date: nil, spent_hours: spent_hours)
     end
 
     def resolve_with(issues, extra_params = {})
