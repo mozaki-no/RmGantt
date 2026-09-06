@@ -225,6 +225,33 @@ data endpoint は、タスクグラフを途中で切り詰めず、完全な pa
 - `REDMINE_CANVAS_GANTT_MAX_DATA_COLLECTION_ITEMS`
 - `REDMINE_CANVAS_GANTT_MAX_DATA_BYTES`
 
+### 大規模プロジェクトでの性能
+
+data endpoint はタスクグラフ全体を 1 レスポンスで構築するため、コストは画面に
+表示されている量ではなく、可視チケット数に比例します。数千チケット規模になると、
+以下のデプロイ設定が効いてきます。
+
+**アセット配信。** ビルド成果物は `public/plugin_assets` からではなく
+`CanvasGanttsController#asset` が配信するため、リクエストは毎回 Rails スタックを
+通ります。レスポンスには長い `Cache-Control` と validator が付き、ファイル名は
+内容ハッシュ付きなので、ブラウザは bundle とフォントサブセットを一度だけ取得します。
+Web サーバ側で対応している場合は `config.action_dispatch.x_sendfile_header`
+（Apache は `X-Sendfile`、nginx は `X-Accel-Redirect`）を設定すると、ファイル送出を
+Ruby プロセスの外に逃がせます。
+
+**圧縮。** Redmine は `Rack::Deflater` を組み込んでおらず、リバースプロキシが圧縮
+するかどうかは環境依存のため、クライアントが `Accept-Encoding: gzip` を提示し、
+かつ本文が 4 KiB を超える場合に data payload をプロセス内で gzip します。前段が
+`Content-Encoding` 設定済みのレスポンスを見た場合は、そのまま通過させます。
+プロキシ側で再エンコードする構成などで無効にしたい場合は
+`REDMINE_CANVAS_GANTT_DISABLE_GZIP=1` を設定してください。
+
+**それでも表示が遅い場合**は、まずサーバ側を計測してください。data endpoint の
+クエリ数は、チケット件数によらず少数で一定になるはずです。チケット 1 件あたり
+1 クエリが出ている場合は、payload のどこかで preload が失われているということで、
+チューニングで回避する話ではなくバグとして報告すべき事象です。上記の安全上限を
+下げても大規模プロジェクトが速くなるわけではなく、上限超過が HTTP 413 になるだけです。
+
 ### 業務カレンダー
 
 Canvas Gantt は、週次非稼働日、国別祝日、会社休業日、振替稼働日を名前付き業務カレンダーで扱えます。解決済みの同じカレンダーを、依存関係検証、自動スケジュール、クリティカルパス計算、Canvas 背景描画、タスク日付の直接変更に使用します。Gantt のドラッグ・リサイズやサイドバーの日付編集で非稼働日が選ばれた場合、開始日は次の稼働日、終了日は直前の稼働日に補正されます。DB マイグレーションは不要です。休日データは外部 YAML を read-only の実行時設定として読み込み、`Setting.plugin_redmine_canvas_gantt` には保存しません。

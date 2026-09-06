@@ -211,6 +211,35 @@ The data endpoint rejects an oversized complete payload with HTTP 413 instead of
 - `REDMINE_CANVAS_GANTT_MAX_DATA_COLLECTION_ITEMS`
 - `REDMINE_CANVAS_GANTT_MAX_DATA_BYTES`
 
+### Performance at scale
+
+The data endpoint builds the whole task graph in one response, so its cost is
+driven by the number of visible issues rather than by what is on screen. A few
+deployment details matter once a project reaches a few thousand issues.
+
+**Asset delivery.** Build output is served by `CanvasGanttsController#asset`
+rather than from `public/plugin_assets`, so every request passes through the
+Rails stack. Responses carry a long `Cache-Control` window and a validator, and
+filenames are content-hashed, so a browser fetches the bundle and the font
+subsets once. If your deployment terminates requests with a web server that
+supports it, set `config.action_dispatch.x_sendfile_header` (`X-Sendfile` for
+Apache, `X-Accel-Redirect` for nginx) so the file itself is served outside the
+Ruby process.
+
+**Compression.** The data payload is gzipped in-process when the client offers
+`Accept-Encoding: gzip` and the body exceeds 4 KiB, because Redmine does not
+mount `Rack::Deflater` and whether a reverse proxy compresses is deployment
+specific. Anything in front that sees `Content-Encoding` already set will pass
+the body through. Set `REDMINE_CANVAS_GANTT_DISABLE_GZIP=1` to turn this off,
+for example if a proxy is configured to re-encode responses.
+
+**If the chart is still slow to open**, measure the server first: the data
+endpoint should issue a small, constant number of queries regardless of issue
+count. A per-issue query count means something in the payload is no longer
+preloaded, which is a bug worth reporting rather than a limit to tune around.
+Lowering the safety limits above does not make a large project faster; it only
+turns an oversized response into an HTTP 413.
+
 ### Business calendars
 
 Canvas Gantt can use named business calendars for weekly non-working days, country holidays, company shutdowns, and substitute working days. The same resolved calendar drives dependency validation, automatic scheduling, critical-path calculations, Canvas background shading, and direct task-date changes. When a non-working day is selected during Gantt drag/resize or sidebar date editing, the start date is normalized forward to the next working day and the due date backward to the previous working day. This feature requires no database migration. Holiday data is read-only runtime configuration stored in external YAML files; it is never stored in `Setting.plugin_redmine_canvas_gantt`.
