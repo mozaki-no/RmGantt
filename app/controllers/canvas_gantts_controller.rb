@@ -1008,7 +1008,7 @@ class CanvasGanttsController < ApplicationController
       .where(project_id: project_ids)
       .distinct
       .limit(data_payload_budget.collection_limit + 1)
-      .pluck(:assigned_to_id, :project_id)
+      .pluck('issues.assigned_to_id', 'issues.project_id')
     data_payload_budget.ensure_count!(pairs, resource: 'assignees')
 
     principal_ids = pairs.filter_map(&:first).uniq
