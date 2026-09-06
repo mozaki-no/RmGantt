@@ -241,6 +241,99 @@ RSpec.describe CanvasGanttsController, type: :controller do
     end
   end
 
+  describe '#apply_asset_cache_headers' do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmp_root = Pathname.new(dir)
+        example.run
+      end
+    end
+
+    def write_asset(name)
+      path = @tmp_root.join(name)
+      File.write(path, 'console.log("ok");')
+      path.to_s
+    end
+
+    it 'marks content-hashed assets immutable so they are never refetched' do
+      controller.send(:apply_asset_cache_headers, write_asset('main-C-eaXpl1.js'))
+
+      cache_control = controller.response.headers['Cache-Control'].to_s
+      expect(cache_control).to include('immutable')
+      expect(cache_control).to include("max-age=#{CanvasGanttsController::ASSET_IMMUTABLE_MAX_AGE.to_i}")
+    end
+
+    it 'keeps hashed assets out of shared caches' do
+      controller.send(:apply_asset_cache_headers, write_asset('main-C-eaXpl1.js'))
+
+      cache_control = controller.response.headers['Cache-Control'].to_s
+      expect(cache_control).to include('private')
+      expect(cache_control).not_to include('public')
+    end
+
+    it 'uses a short revalidating window for assets without a content hash' do
+      controller.send(:apply_asset_cache_headers, write_asset('vite.svg'))
+
+      cache_control = controller.response.headers['Cache-Control'].to_s
+      expect(cache_control).to include("max-age=#{CanvasGanttsController::ASSET_MUTABLE_MAX_AGE.to_i}")
+      expect(cache_control).not_to include('immutable')
+    end
+
+    it 'always emits a validator so a stale entry can answer 304' do
+      controller.send(:apply_asset_cache_headers, write_asset('vite.svg'))
+
+      expect(controller.response.headers['ETag']).to be_present
+      expect(controller.response.headers['Last-Modified']).to be_present
+    end
+  end
+
+  describe '#render_payload_json' do
+    let(:large_payload) { { rows: Array.new(500) { |i| { id: i, subject: "issue #{i}" } } }.to_json }
+
+    it 'compresses a large payload when the client accepts gzip' do
+      request.headers['Accept-Encoding'] = 'gzip, deflate, br'
+
+      controller.send(:render_payload_json, large_payload)
+
+      expect(controller.response.headers['Content-Encoding']).to eq('gzip')
+      expect(controller.response.headers['Vary'].to_s).to include('Accept-Encoding')
+      expect(ActiveSupport::Gzip.decompress(controller.response.body)).to eq(large_payload)
+    end
+
+    it 'sends the payload uncompressed when gzip was not offered' do
+      request.headers['Accept-Encoding'] = 'br'
+
+      controller.send(:render_payload_json, large_payload)
+
+      expect(controller.response.headers['Content-Encoding']).to be_nil
+      expect(controller.response.body).to eq(large_payload)
+    end
+
+    it 'leaves small payloads alone' do
+      request.headers['Accept-Encoding'] = 'gzip'
+      small_payload = { ok: true }.to_json
+
+      controller.send(:render_payload_json, small_payload)
+
+      expect(controller.response.headers['Content-Encoding']).to be_nil
+      expect(controller.response.body).to eq(small_payload)
+    end
+
+    it 'can be disabled for deployments whose proxy re-encodes responses' do
+      request.headers['Accept-Encoding'] = 'gzip'
+
+      begin
+        ENV['REDMINE_CANVAS_GANTT_DISABLE_GZIP'] = '1'
+        controller.send(:render_payload_json, large_payload)
+      ensure
+        ENV.delete('REDMINE_CANVAS_GANTT_DISABLE_GZIP')
+      end
+
+      expect(controller.response.headers['Content-Encoding']).to be_nil
+      expect(controller.response.body).to eq(large_payload)
+    end
+  end
+
   describe 'GET #data' do
     it 'returns forbidden when view permission is missing' do
       allow(controller).to receive(:set_permissions) do

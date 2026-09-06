@@ -1,4 +1,5 @@
 require 'set'
+require 'zlib'
 
 class CanvasGanttsController < ApplicationController
   BUSINESS_CALENDAR_REVISION_HEADER = 'HTTP_X_REDMINE_CANVAS_GANTT_CALENDAR_REVISION'.freeze
@@ -434,7 +435,12 @@ class CanvasGanttsController < ApplicationController
     file_path = safe_build_asset_path(params[:asset_path].to_s)
     return head :not_found unless file_path
 
-    send_file file_path, type: Rack::Mime.mime_type(File.extname(file_path), 'application/octet-stream'), disposition: 'inline'
+    apply_asset_cache_headers(file_path)
+    return if performed?
+
+    send_file file_path,
+              type: Rack::Mime.mime_type(File.extname(file_path), 'application/octet-stream'),
+              disposition: 'inline'
   end
 
   # GET /projects/:project_id/canvas_gantt
@@ -477,7 +483,7 @@ class CanvasGanttsController < ApplicationController
         baseline: visible_baseline_snapshot(baseline_load.snapshot, project_ids),
         business_calendar: business_calendar_resolver.payload(projects: business_calendar_projects(project_ids))
       )
-      render body: data_payload_budget.encode_json(payload), content_type: 'application/json'
+      render_payload_json(data_payload_budget.encode_json(payload))
     rescue RedmineCanvasGantt::DataPayloadBudget::Exceeded => e
       render_data_payload_limit(e)
     rescue => e
@@ -819,6 +825,32 @@ class CanvasGanttsController < ApplicationController
     l(:"canvas_gantt.#{key}", **options)
   end
 
+  # Vite emits content-hashed filenames, so a hashed asset can be cached
+  # permanently and never revalidated.  Without this the browser refetches the
+  # whole bundle (and every font subset) through the Rails stack on every page
+  # view, because send_file sets neither ETag nor Last-Modified.
+  ASSET_CONTENT_HASH_PATTERN = /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+\z/
+  ASSET_IMMUTABLE_MAX_AGE = 1.year
+  ASSET_MUTABLE_MAX_AGE = 5.minutes
+
+  # Deliberately `private`, not `public`: these responses are produced inside
+  # an authenticated Redmine controller and can carry a Set-Cookie header, so
+  # they must not land in a shared proxy cache.  A per-browser cache is what
+  # actually removes the repeated multi-megabyte download.
+  def apply_asset_cache_headers(file_path)
+    stat = File.stat(file_path)
+
+    if ASSET_CONTENT_HASH_PATTERN.match?(File.basename(file_path))
+      expires_in ASSET_IMMUTABLE_MAX_AGE, public: false, immutable: true
+    else
+      expires_in ASSET_MUTABLE_MAX_AGE, public: false
+    end
+
+    # A validator lets unhashed assets answer 304 instead of a full body, and
+    # gives hashed assets a cheap fallback when an intermediary drops max-age.
+    fresh_when(etag: [stat.size, stat.mtime.to_i], last_modified: stat.mtime)
+  end
+
   def safe_build_asset_path(relative_path)
     return nil if relative_path.blank? || relative_path.include?('..') || relative_path.start_with?('/')
 
@@ -1005,6 +1037,45 @@ class CanvasGanttsController < ApplicationController
       .pluck(:tracker_id, :project_id, 'trackers.name')
     data_payload_budget.ensure_count!(rows, resource: 'trackers')
     rows.map { |tracker_id, project_id, name| { id: tracker_id, project_id: project_id, name: name } }
+  end
+
+  # The gantt payload is the one response in this plugin that can reach several
+  # megabytes.  Redmine does not mount Rack::Deflater, and a reverse proxy in
+  # front of it may or may not compress, so compress here when the client asked
+  # for it.  An intermediary that sees Content-Encoding already set will pass
+  # the body through rather than re-encoding it.
+  GZIP_MIN_BYTES = 4 * 1024
+  GZIP_LEVEL = Zlib::BEST_SPEED
+
+  def render_payload_json(json)
+    unless compress_payload?(json)
+      return render body: json, content_type: 'application/json'
+    end
+
+    response.headers['Content-Encoding'] = 'gzip'
+    append_vary_header('Accept-Encoding')
+    render body: ActiveSupport::Gzip.compress(json, GZIP_LEVEL), content_type: 'application/json'
+  end
+
+  def compress_payload?(json)
+    return false if ENV['REDMINE_CANVAS_GANTT_DISABLE_GZIP'].to_s == '1'
+    return false if json.bytesize < GZIP_MIN_BYTES
+    return false if response.headers['Content-Encoding'].present?
+
+    accepts_gzip?
+  end
+
+  def accepts_gzip?
+    request.get_header('HTTP_ACCEPT_ENCODING').to_s
+      .split(',')
+      .any? { |token| token.split(';').first.to_s.strip.casecmp?('gzip') }
+  end
+
+  def append_vary_header(value)
+    existing = response.headers['Vary'].to_s.split(',').map(&:strip).reject(&:empty?)
+    return if existing.any? { |token| token.casecmp?(value) }
+
+    response.headers['Vary'] = (existing + [value]).join(', ')
   end
 
   def render_internal_error(error)
