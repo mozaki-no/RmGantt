@@ -10,6 +10,13 @@ type CanvasConfig = {
 const uniqueName = (prefix: string) => `${prefix} ${Date.now()} ${Math.random().toString(36).slice(2, 8)}`;
 const restAuthorization = `Basic ${Buffer.from('admin:admin').toString('base64')}`;
 
+const addUtcDays = (date: string, days: number): string => {
+  const [year, month, day] = date.split('-').map(Number);
+  const value = new Date(Date.UTC(year, month - 1, day));
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
+
 const ensureCanvasGanttModuleEnabled = async (redmineBase: string, page: Page, projectIdentifier: string) => {
   await page.goto(`${redmineBase}/projects/${projectIdentifier}/settings/modules`);
 
@@ -155,7 +162,11 @@ const closeDisplaySettings = async (page: Page) => {
 const enableAutoSave = async (page: Page) => {
   await openDisplaySettings(page);
 
-  const autoSave = page.getByLabel('Auto Save');
+  const autoSave = page.getByRole('switch', {
+
+    name: /^(Auto Save|自動保存)$/
+
+  });
   if (!(await autoSave.isChecked())) {
     await autoSave.check({ force: true });
   }
@@ -168,7 +179,11 @@ const enableAutoSave = async (page: Page) => {
 const disableAutoSave = async (page: Page) => {
   await openDisplaySettings(page);
 
-  const autoSave = page.getByLabel('Auto Save');
+  const autoSave = page.getByRole('switch', {
+
+    name: /^(Auto Save|自動保存)$/
+
+  });
   if (await autoSave.isChecked()) {
     await autoSave.uncheck({ force: true });
   }
@@ -466,7 +481,7 @@ test('linked downstream shift does not publish a self-induced conflict', async (
 
   await page.getByTestId('relation-settings-menu-button').click();
   await page.getByTestId('auto-schedule-move-mode-select').selectOption('linked_downstream_shift');
-  await page.getByTestId('relation-settings-menu').getByRole('button', { name: /save/i }).click();
+  await page.getByTestId('relation-settings-save-button').click();
   await enableAutoSave(page);
 
   const originRow = page.getByTestId(`task-row-${originId}`);
@@ -542,7 +557,7 @@ test('linked downstream shift moves a valid dependency pair left through one sch
 
   await page.getByTestId('relation-settings-menu-button').click();
   await page.getByTestId('auto-schedule-move-mode-select').selectOption('linked_downstream_shift');
-  await page.getByTestId('relation-settings-menu').getByRole('button', { name: /save/i }).click();
+  await page.getByTestId('relation-settings-save-button').click();
   await enableAutoSave(page);
 
   const originRow = page.getByTestId(`task-row-${originId}`);
@@ -815,6 +830,82 @@ test('Auto Save OFF defers the inline mutation until the manual Save action', as
   expect(pluginPatchStatuses).toContain(200);
   const afterManualSave = await fetchRestIssue(page, issueId);
   expect(afterManualSave.statusId).toBe(Number(nextStatus));
+});
+
+test('Manual to Auto Save persists a bar move before creating Precedes and survives reload', async ({ page, baseURL }) => {
+  const redmineBase = baseURL ?? 'http://127.0.0.1:3000';
+  await adminLogin(redmineBase, page);
+  await ensureCanvasGanttModuleEnabled(redmineBase, page, 'ecookbook');
+  const originId = await createIssue(page, 'ecookbook', {
+    subject: uniqueName('Canvas auto enable origin'), startDate: '2027-08-10', dueDate: '2027-08-12'
+  });
+  await loadCanvasPage(page, redmineBase, 'ecookbook', '?sort=id:desc');
+  await openDisplaySettings(page);
+  const toggle = page.getByRole('switch', { name: /^(Auto Save|自動保存)$/ });
+  if (await toggle.isChecked()) await page.locator('label').filter({ has: toggle }).click();
+  await expect(toggle).not.toBeChecked();
+  await closeDisplaySettings(page);
+  const before = await fetchRestIssue(page, originId);
+  const events: string[] = [];
+  page.on('response', response => {
+    if (response.request().method() === 'POST' && response.url().includes('/schedule_mutation')) {
+      expect(response.status()).toBe(200);
+      events.push('task-success');
+    }
+  });
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/relations.json')) events.push('relation');
+  });
+  const row = page.getByTestId(`task-row-${originId}`);
+  await row.dispatchEvent('click');
+  await row.dispatchEvent('mousemove');
+  const start = page.getByTestId(`task-resize-handle-start-${originId}`);
+  const end = page.getByTestId(`task-resize-handle-end-${originId}`);
+  await expect(start).toBeVisible();
+  await expect(end).toBeVisible();
+  const startBox = (await start.boundingBox())!;
+  const endBox = (await end.boundingBox())!;
+  const x = (startBox.x + startBox.width / 2 + endBox.x + endBox.width / 2) / 2;
+  const y = startBox.y + startBox.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 160, y, { steps: 10 });
+  await page.mouse.up();
+  await expect(page.getByTitle(/Save changes|変更を保存/)).toBeVisible();
+  expect(events).toEqual([]);
+  expect(await fetchRestIssue(page, originId)).toMatchObject({ startDate: before.startDate, dueDate: before.dueDate });
+
+  await openDisplaySettings(page);
+  await page.locator('label').filter({ has: toggle }).click();
+  await expect(toggle).toBeChecked();
+  await expect(toggle).toBeEnabled();
+  await closeDisplaySettings(page);
+  const saved = await fetchRestIssue(page, originId);
+  expect(saved.startDate).not.toBe(before.startDate);
+  expect(saved.dueDate).not.toBe(before.dueDate);
+  expect(events).toEqual(['task-success']);
+
+  expect(saved.dueDate).not.toBeNull();
+  const successorDate = addUtcDays(saved.dueDate!, 14);
+  const successorId = await createIssue(page, 'ecookbook', {
+    subject: uniqueName('Canvas auto enable successor'),
+    startDate: successorDate,
+    dueDate: successorDate
+  });
+
+  await createPrecedesRelation(page, originId, successorId);
+  expect(events).toEqual(['task-success', 'relation']);
+
+  await page.reload();
+  await expect(page.getByTestId(`task-row-${originId}`)).toBeVisible();
+  expect(await fetchRestIssue(page, originId)).toMatchObject({ startDate: saved.startDate, dueDate: saved.dueDate });
+  const persisted = await page.evaluate(async ({ originId, successorId, restAuthorization }) => {
+    const response = await fetch(`/issues/${originId}/relations.json`, { headers: { Authorization: restAuthorization } });
+    const payload = await response.json();
+    return { status: response.status, found: payload.relations?.some((relation: { issue_to_id: number; relation_type: string }) =>
+      relation.issue_to_id === successorId && relation.relation_type === 'precedes') };
+  }, { originId, successorId, restAuthorization });
+  expect(persisted).toEqual({ status: 200, found: true });
 });
 
 test('plugin task mutation returns target not_found for a missing issue', async ({ page, baseURL }) => {
