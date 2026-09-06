@@ -1,5 +1,4 @@
 require 'set'
-require_relative 'spent_hours_preloader'
 
 module RedmineCanvasGantt
   class DataPayloadBuilder
@@ -31,11 +30,10 @@ module RedmineCanvasGantt
       }.compact
     end
 
+    # Serialization stays free of queries: Issue#spent_hours is preloaded by
+    # QueryStateResolver when the collection is loaded, so reading it here is
+    # an attribute read rather than a per-record SUM.
     def build_tasks(issues)
-      # Issue#spent_hours issues one SUM per record.  Preloading collapses the
-      # whole collection into a single grouped query before serialization.
-      SpentHoursPreloader.call(issues, @current_user)
-
       can_log_time_by_project_id = {}
       can_edit_issues_by_project_id = {}
 

@@ -117,34 +117,6 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
   end
 
   describe '#build_tasks' do
-    it 'preloads spent hours once instead of one SUM per issue' do
-      current_user = instance_double(User)
-      extractor = instance_double(RedmineCanvasGantt::CustomFieldExtractor)
-      builder = described_class.new(custom_field_extractor: extractor, current_user: current_user)
-
-      project = instance_double(Project, id: 1, name: 'Root')
-      issues = Array.new(3) do |index|
-        instance_double(
-          Issue,
-          id: index + 1, subject: "Task", project_id: 1, project: project,
-          start_date: nil, due_date: nil, done_ratio: 0,
-          status_id: 1, status: instance_double(IssueStatus, name: 'New'),
-          assigned_to_id: nil, assigned_to: nil, parent_id: nil, lock_version: 0,
-          tracker_id: 1, tracker: nil, fixed_version_id: nil, fixed_version: nil,
-          priority_id: 1, priority: nil, author_id: 1, author: nil,
-          category_id: nil, category: nil, estimated_hours: nil,
-          created_on: nil, updated_on: nil, spent_hours: 0.0, editable?: true
-        )
-      end
-
-      allow(extractor).to receive(:build_task_custom_field_values).and_return({})
-      allow(current_user).to receive(:allowed_to?).and_return(true)
-      expect(RedmineCanvasGantt::SpentHoursPreloader)
-        .to receive(:call).with(issues, current_user).once
-
-      builder.build_tasks(issues)
-    end
-
     it 'resolves :edit_issues once per project rather than once per issue' do
       current_user = instance_double(User)
       extractor = instance_double(RedmineCanvasGantt::CustomFieldExtractor)
@@ -165,8 +137,10 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         )
       end
 
-      allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
       allow(extractor).to receive(:build_task_custom_field_values).and_return({})
+      # Serialization must stay query-free; the preload happens where the
+      # collection is loaded, not here.
+      expect(RedmineCanvasGantt::SpentHoursPreloader).not_to receive(:call)
       expect(current_user).to receive(:allowed_to?).with(:edit_issues, project).once.and_return(true)
       expect(current_user).to receive(:allowed_to?).with(:log_time, project).once.and_return(true)
 
@@ -193,7 +167,6 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         created_on: nil, updated_on: nil, spent_hours: 0.0
       )
 
-      allow(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call)
       allow(extractor).to receive(:build_task_custom_field_values).and_return({})
       allow(current_user).to receive(:allowed_to?).with(:edit_issues, project).and_return(false)
       allow(current_user).to receive(:allowed_to?).with(:log_time, project).and_return(false)

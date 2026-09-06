@@ -6,11 +6,12 @@ RSpec.describe RedmineCanvasGantt::CustomFieldExtractor do
     described_class.new(serializer: serializer, supported_formats: %w[string list])
   end
 
+  # build_project_custom_fields filters on `is_a?(IssueCustomField)`, which a
+  # verifying double does not satisfy, so these are real (unsaved) records.
   def build_custom_field(id:, name: "CF#{id}", format: 'string', position: id)
-    instance_double(
-      IssueCustomField,
-      id: id, name: name, field_format: format, position: position, multiple?: false
-    )
+    field = IssueCustomField.new(name: name, field_format: format, position: position, multiple: false)
+    field.id = id
+    field
   end
 
   # `available_calls` counts how often the (project, tracker) field set is
