@@ -308,4 +308,68 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
       expect(current_user).to have_received(:allowed_to?).with(:log_time, project1).twice
     end
   end
+  describe '#build_versions' do
+    let(:custom_field_extractor) do
+      instance_double(RedmineCanvasGantt::CustomFieldExtractor, build_project_custom_fields: [])
+    end
+    let(:version) do
+      instance_double(
+        Version,
+        id: 9,
+        name: 'Sprint 1',
+        effective_date: Date.new(2026, 6, 30),
+        project_id: 3,
+        status: 'open'
+      )
+    end
+
+    before do
+      allow(Version).to receive_message_chain(:visible, :where, :to_a).and_return([version])
+    end
+
+    it 'serializes the preloaded progress instead of querying each Version' do
+      preloader = double(
+        'VersionProgressPreloader',
+        call: {
+          9 => RedmineCanvasGantt::VersionProgressPreloader::Progress.new(
+            completed_percent: 42.5,
+            start_date: Date.new(2026, 6, 1)
+          )
+        }
+      )
+      builder = described_class.new(
+        custom_field_extractor: custom_field_extractor,
+        current_user: instance_double(User),
+        version_progress_preloader: preloader
+      )
+
+      expect(builder.build_versions([3])).to eq(
+        [{
+          id: 9,
+          name: 'Sprint 1',
+          effective_date: Date.new(2026, 6, 30),
+          start_date: Date.new(2026, 6, 1),
+          completed_percent: 42.5,
+          project_id: 3,
+          status: 'open'
+        }]
+      )
+    end
+
+    it 'falls back to Redmine when the preloader declines a Version' do
+      allow(version).to receive(:completed_percent).and_return(17)
+      allow(version).to receive(:start_date).and_return(Date.new(2026, 5, 4))
+      preloader = double('VersionProgressPreloader', call: {})
+      builder = described_class.new(
+        custom_field_extractor: custom_field_extractor,
+        current_user: instance_double(User),
+        version_progress_preloader: preloader
+      )
+
+      entry = builder.build_versions([3]).first
+
+      expect(entry[:completed_percent]).to eq(17)
+      expect(entry[:start_date]).to eq(Date.new(2026, 5, 4))
+    end
+  end
 end

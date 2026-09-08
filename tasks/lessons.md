@@ -17,3 +17,22 @@
   two large data requests, so its 60-second timeout can expire even when both
   requests return HTTP 200. Record per-request server timing as well as total
   browser-test time.
+
+## Redmine model internals in serialization
+
+- Redmine's `Version#completed_percent` and `Version#start_date` are lazy
+  per-version calculations, and the first one hides one visible subtree `SUM`
+  per non-leaf fixed issue. Any payload that serializes a version list needs a
+  bulk calculation, not a preloaded association.
+- The nested set makes a per-parent subtree aggregate a single grouped range
+  join (`parents.root_id = issues.root_id AND issues.lft >= parents.lft AND
+  issues.rgt <= parents.rgt`). Reach for that before writing a per-record loop.
+- Reproducing a Redmine calculation means reproducing its visibility rules
+  exactly, and they are not uniform: `Version#completed_percent` counts and
+  weights *all* fixed issues, while the `Issue#total_estimated_hours` it calls
+  honours `Issue.visible`. Cover both halves with a parity spec that compares
+  against Redmine's own accessor on a freshly loaded record, since Redmine
+  memoizes progress on the instance.
+- When a bulk reimplementation replaces a Redmine accessor, let it fall back to
+  that accessor on any error. A future Redmine release changing the internals
+  then costs speed, not correctness.

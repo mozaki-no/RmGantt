@@ -2,14 +2,24 @@
 
 ## Status
 
-Open. The primary bottleneck is identified but not fixed.
+The primary bottleneck is fixed; the 10,000-issue re-measurement is still
+outstanding.
 
-The largest issue is an N+1 query in version progress serialization. On the
+The largest issue was an N+1 query in version progress serialization. On the
 measured 10,000-issue data set, `DataPayloadBuilder#build_versions` spent 17.65
 seconds and executed 4,252 uncached SQL queries. Of those, 4,000 were subtree
 `SUM(estimated_hours)` queries triggered by `Issue#total_estimated_hours`.
 
-No production code was changed as part of this investigation.
+`RedmineCanvasGantt::VersionProgressPreloader` now answers
+`Version#completed_percent` and `Version#start_date` for every version at once
+in three queries. See [Fix](#fix) below for what was verified and what still
+needs the load environment.
+
+The two secondary findings are tracked separately and are not addressed here:
+the seven-second issue load (GitHub issue #9) and the smoke test's inability to
+distinguish a slow response from a hang (GitHub issue #10).
+
+No production code was changed while the measurements above were taken.
 
 ## Validation environment
 
@@ -124,8 +134,12 @@ build assets.
 A disposable Redmine 6.1/PostgreSQL RSpec environment was prepared, but the
 full backend run was interrupted before it produced a final summary. Its
 partial output must not be treated as a pass or failure. The disposable
-container and database were removed. Rerun the backend specs from a fresh test
-database before merging a fix.
+container and database were removed.
+
+The backend suite has since been rerun from a fresh Redmine 6.1 / SQLite test
+database while implementing the fix below: 307 examples, 0 failures, 11 pending
+(the pending examples need the MySQL/MariaDB CI adapter for their READ
+COMMITTED barrier). CI runs the same suite against Redmine 6.0, 6.1, and 7.0.
 
 ## HTTP timing observed
 
@@ -184,7 +198,58 @@ This contradicts the README performance contract that the data endpoint query
 count should stay small and independent of issue count. It is a product bug,
 not a deployment-tuning problem.
 
+## Fix
+
+`lib/redmine_canvas_gantt/version_progress_preloader.rb` calculates both
+per-version values for the whole version list at once:
+
+1. the closed `IssueStatus` ids;
+2. one grouped range join over the issue nested set, giving every non-leaf
+   fixed issue its visible subtree estimate in a single `SUM ... GROUP BY`;
+3. one projection of the fixed issues of every requested version, from which
+   the open/closed counts, the weighted progress, and the minimum start date
+   are calculated in memory.
+
+The arithmetic reproduces Redmine's `FixedIssuesExtension` rather than deriving
+progress from the Canvas Gantt task array, because a version may be shared
+across projects and may hold issues the current toolbar filters out. Counting
+and weighting deliberately ignore issue visibility, exactly as Redmine does,
+while the subtree estimate honours it. When the preloader raises — a Redmine
+release changing these internals — it returns an empty result and
+`build_versions` falls back to Redmine's own accessors, so the payload stays
+correct and only loses the speed-up.
+
+### Measured after the fix
+
+`spec/controllers/canvas_gantts_data_performance_spec.rb` drives the real
+`data.json` endpoint over three versions and 1, 100, and 1,000 issues, half of
+them parents of the other half:
+
+| Visible issues | Uncached queries before | Uncached queries after |
+| ---: | ---: | ---: |
+| 1 | 76 | 62 |
+| 100 | 484 | 62 |
+| 1,000 | 4,084 | 62 |
+
+`spec/lib/redmine_canvas_gantt/version_progress_preloader_spec.rb` asserts
+value parity against Redmine's own `Version#completed_percent` and
+`Version#start_date` for an empty version, a fully closed version, mixed
+estimated and unestimated issues, a parent issue whose estimate comes from its
+subtree, a subtree containing an issue invisible to the current user, and a
+version shared across projects. Both specs run against Redmine 6.0, 6.1, and
+7.0 in CI.
+
+### Still outstanding
+
+The 10,000-issue HTTP timing, payload size, and Playwright completion time have
+not been re-measured: that data set lives on the validation host described
+above, not in CI. Rerun the [segment profile](#segment-profile) and the
+Playwright load run there and record the before/after numbers in this document.
+
 ## Recommended implementation plan
+
+The plan below is kept as written; every step except the final re-measurement
+is done.
 
 1. Add a focused version-progress preloader/calculator under
    `lib/redmine_canvas_gantt/`.
@@ -207,8 +272,8 @@ filters, and Redmine versions may be shared across project boundaries.
 
 ## Secondary optimization candidate
 
-Issue resolution uses only three uncached queries, but still takes about seven
-seconds. The association load produced a very large joined query because
+Tracked as GitHub issue #9. Issue resolution uses only three uncached queries,
+but still takes about seven seconds. The association load produced a very large joined query because
 `QueryStateResolver#issues_scope_for` uses `includes` with the bounded/limited
 load. After fixing version progress, compare this with explicit `preload` calls
 for associations that are not used in SQL predicates.
@@ -225,10 +290,14 @@ is a measurement target, not a compatibility contract.
 
 The work is complete when:
 
-- version progress values match Redmine for the edge cases above;
-- query count does not grow with issue count or parent count;
-- the standard backend specs pass on supported Redmine versions;
-- frontend build, lint, async-contract, and unit tests pass;
-- the Redmine-integrated smoke test passes at 10,000 issues;
-- the before/after HTTP time, query count, payload size, and browser completion
-  time are recorded in this document.
+- [x] version progress values match Redmine for the edge cases above;
+- [x] query count does not grow with issue count or parent count;
+- [x] the standard backend specs pass on supported Redmine versions;
+- [x] frontend build, lint, async-contract, and unit tests pass;
+- [ ] the Redmine-integrated smoke test passes at 10,000 issues;
+- [ ] the before/after HTTP time, query count, payload size, and browser
+  completion time are recorded in this document.
+
+The two unchecked items need the validation host: CI has no 10,000-issue data
+set. They are the remaining work described under
+[Still outstanding](#still-outstanding).
