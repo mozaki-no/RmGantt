@@ -1,11 +1,15 @@
 require 'set'
 
+require_relative 'version_progress_preloader'
+
 module RedmineCanvasGantt
   class DataPayloadBuilder
-    def initialize(custom_field_extractor:, current_user:, data_payload_budget: nil)
+    def initialize(custom_field_extractor:, current_user:, data_payload_budget: nil,
+                   version_progress_preloader: VersionProgressPreloader)
       @custom_field_extractor = custom_field_extractor
       @current_user = current_user
       @data_payload_budget = data_payload_budget
+      @version_progress_preloader = version_progress_preloader
     end
 
     def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_assignees:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil)
@@ -107,28 +111,38 @@ module RedmineCanvasGantt
       end
     end
 
+    # Version#completed_percent and Version#start_date are per-version queries,
+    # and completed_percent hides one subtree SUM per non-leaf fixed issue.
+    # The preloader answers both for every version at once; when it declines
+    # (an unexpected Redmine internal), serialization falls back to Redmine's
+    # own accessors so the payload stays correct.
     def build_versions(project_ids)
-      scope = Version.visible.where(project_id: project_ids)
-      versions = if @data_payload_budget
-                   @data_payload_budget.load_records(
-                     scope,
-                     resource: 'versions',
-                     limit: @data_payload_budget.collection_limit
-                   )
-                 else
-                   scope
-                 end
+      versions = load_versions(project_ids)
+      progress = @version_progress_preloader.call(versions, @current_user)
+
       versions.map do |version|
+        version_progress = progress[version.id]
         {
           id: version.id,
           name: version.name,
           effective_date: version.effective_date,
-          start_date: version.try(:start_date),
-          completed_percent: version.completed_percent,
+          start_date: version_progress ? version_progress.start_date : version.try(:start_date),
+          completed_percent: version_progress ? version_progress.completed_percent : version.completed_percent,
           project_id: version.project_id,
           status: version.status
         }
       end
+    end
+
+    def load_versions(project_ids)
+      scope = Version.visible.where(project_id: project_ids)
+      return scope.to_a unless @data_payload_budget
+
+      @data_payload_budget.load_records(
+        scope,
+        resource: 'versions',
+        limit: @data_payload_budget.collection_limit
+      )
     end
 
     def build_filter_options(projects:, assignee_candidates:, trackers:)
