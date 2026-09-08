@@ -3,8 +3,11 @@
 .codegraph/
 docs/*
 !docs/architecture/
+!docs/performance/
 docs/architecture/*
 !docs/architecture/timer-session-architecture.png
+docs/performance/*
+!docs/performance/2026-09-09-10000-issue-investigation.md
 graphify-out/
 spec-docs/
 DESIGN.md
@@ -12,7 +15,9 @@ conductor/
 .playwright-mcp/
 output/
 #spec-docs/
-tasks/
+tasks/*
+!tasks/todo.md
+!tasks/lessons.md
 #.codex
 .specify
 specs
