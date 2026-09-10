@@ -17,6 +17,13 @@
   two large data requests, so its 60-second timeout can expire even when both
   requests return HTTP 200. Record per-request server timing as well as total
   browser-test time.
+- Do not assume `includes` will issue separate preload queries. On the bounded
+  10,000-issue relation, Rails chose a distinct-ID query plus a wide joined
+  eager load. Inspect the actual SQL before selecting an association strategy.
+- A larger constant query count can be faster than a smaller one. Explicit
+  preload used 11 queries instead of 3 but cut issue resolution by about two
+  thirds and allocations by about 60%; keep query-count checks focused on
+  growth with issue count, not on minimizing the absolute number alone.
 
 ## Redmine model internals in serialization
 

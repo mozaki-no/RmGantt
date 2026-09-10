@@ -2,8 +2,8 @@
 
 ## Status
 
-The primary bottleneck is fixed; the 10,000-issue re-measurement is still
-outstanding.
+The primary bottleneck is fixed and the 10,000-issue re-measurement is
+complete.
 
 The largest issue was an N+1 query in version progress serialization. On the
 measured 10,000-issue data set, `DataPayloadBuilder#build_versions` spent 17.65
@@ -239,12 +239,32 @@ subtree, a subtree containing an issue invisible to the current user, and a
 version shared across projects. Both specs run against Redmine 6.0, 6.1, and
 7.0 in CI.
 
-### Still outstanding
+### 10,000-issue validation-host re-measurement
 
-The 10,000-issue HTTP timing, payload size, and Playwright completion time have
-not been re-measured: that data set lives on the validation host described
-above, not in CI. Rerun the [segment profile](#segment-profile) and the
-Playwright load run there and record the before/after numbers in this document.
+The fix was deployed to the same persistent validation environment and the
+single-request measurement was repeated:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| `data.json` wall time | 28.310 s | 9.684 s |
+| Rails request-log SQL queries | 8,369 | 72 |
+| Version serialization | 17.652 s / 4,252 uncached queries | 0.636 s / 4 uncached queries |
+| Encoded payload | not recorded | about 8.53 MB |
+
+The response retained 10,000 tasks, 5,990 relations, and 50 versions. Browser
+JSON parsing took 47 ms. All 50 preloaded version-progress values were compared
+with Redmine's accessors and had zero mismatches.
+
+The Redmine smoke test then passed three times: 46.6 seconds, 45.6 seconds, and
+56.7 seconds. The final run used the original 60-second test timeout that had
+failed before the fix. There were no page errors, browser console errors,
+failed scripts, or failed build assets.
+
+A fresh segment profile on 2026-09-11 measured version serialization at
+0.316–0.535 seconds and four uncached queries across three runs. The next
+largest segment remained issue resolution; its dedicated `includes` versus
+`preload` comparison is recorded in
+[`2026-09-11-issue-load-strategy.md`](2026-09-11-issue-load-strategy.md).
 
 ## Recommended implementation plan
 
@@ -264,7 +284,9 @@ is done.
 6. Add a real-model query-count regression proving that SQL count remains
    constant at 1, 100, and 1,000 issues. Do not merely stub
    `Version#completed_percent`.
-7. Rerun the 10,000-issue HTTP and Playwright measurements.
+7. Rerun the 10,000-issue HTTP and Playwright measurements. Done on the
+   validation host; see [10,000-issue validation-host
+   re-measurement](#10000-issue-validation-host-re-measurement).
 
 Do not calculate version progress from only the currently filtered Gantt issue
 array. A version may contain issues excluded by the current toolbar/query
@@ -272,14 +294,19 @@ filters, and Redmine versions may be shared across project boundaries.
 
 ## Secondary optimization candidate
 
-Tracked as GitHub issue #9. Issue resolution uses only three uncached queries,
-but still takes about seven seconds. The association load produced a very large joined query because
-`QueryStateResolver#issues_scope_for` uses `includes` with the bounded/limited
-load. After fixing version progress, compare this with explicit `preload` calls
-for associations that are not used in SQL predicates.
+Tracked as GitHub issue #9. The follow-up comparison on 2026-09-11 confirmed
+that issue resolution's three uncached queries include two wide eager-load
+queries with every configured association joined. Explicit `preload` used 11
+constant queries but reduced the 10,000-issue median from 6.115 seconds to
+2.034 seconds and Ruby object allocations by 59.6%, while returning the same
+10,000 unique issues. The query count stayed at 11 for both 1,000 and 10,000
+issues.
 
-This is secondary: it does not explain the query explosion, and it should be
-benchmarked separately so that the primary fix remains small and reviewable.
+See
+[`2026-09-11-issue-load-strategy.md`](2026-09-11-issue-load-strategy.md) for
+the method, individual samples, independent confirmation run, and recommended
+implementation checks. This remains separate from the version-progress fix so
+both changes stay independently reviewable.
 
 ## Expected impact and completion criteria
 
@@ -294,10 +321,6 @@ The work is complete when:
 - [x] query count does not grow with issue count or parent count;
 - [x] the standard backend specs pass on supported Redmine versions;
 - [x] frontend build, lint, async-contract, and unit tests pass;
-- [ ] the Redmine-integrated smoke test passes at 10,000 issues;
-- [ ] the before/after HTTP time, query count, payload size, and browser
+- [x] the Redmine-integrated smoke test passes at 10,000 issues;
+- [x] the before/after HTTP time, query count, payload size, and browser
   completion time are recorded in this document.
-
-The two unchecked items need the validation host: CI has no 10,000-issue data
-set. They are the remaining work described under
-[Still outstanding](#still-outstanding).
