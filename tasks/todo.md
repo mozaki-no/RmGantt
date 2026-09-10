@@ -35,7 +35,20 @@
 - Still open: the post-deploy 10,000-issue endpoint and browser re-measurement
   on the validation host.
 
-## Open: make the Redmine smoke test report per-request timing
+## Done: make the Redmine smoke test report per-request timing
 
-- GitHub issue #10. A slow-but-successful response currently fails the same way
-  a hang does.
+- GitHub issue #10. A slow-but-successful response used to fail the same way a
+  hang does.
+- `spa/tests/e2e-redmine/redmine-smoke.pw.ts` now logs every Canvas Gantt data
+  request as it completes (status, total ms, and the server's share of it), and
+  an afterEach hook prints the report even when the test body timed out. A
+  request that started and never responded is listed as UNFINISHED, which is
+  what separates a hang from a slow endpoint.
+- `CANVAS_GANTT_SMOKE_TIMEOUT_MS` sets the per-test timeout deliberately; the
+  default stays 60 s for the fixture-sized CI suite. `CANVAS_GANTT_SMOKE_DATA_BUDGET_MS`
+  optionally fails a request that is slower than the budget.
+- The formatting and budget rules live in `spa/tests/e2e-redmine/dataRequestTiming.ts`,
+  free of any Playwright import, and are unit tested.
+- Verified against a real Redmine 6.1: a slow run reports
+  `completed ... HTTP 200 in 205 ms`, and a stalled endpoint reports
+  `UNFINISHED ... no response`, both alongside the timeout.

@@ -28,6 +28,15 @@
   other one, and prove it forced it. Both strategies return the same records by
   design, so a parity spec that does not assert differing SQL keeps passing
   after a revert, comparing two runs of the same strategy.
+- Diagnostics for a timeout have to be emitted before the timeout, not
+  collected at the end of the test. A Playwright test body stops at its
+  timeout, so per-request numbers are logged as each request completes and the
+  summary is printed from an afterEach hook; anything gathered only after the
+  last assertion is exactly what a timed-out run loses.
+- Record what did not finish, not only what did. Timing a completed request
+  says an endpoint was slow; only the list of requests still in flight says it
+  hung. Track requests from the `request` event and remove them on
+  `requestfinished` / `requestfailed`, so whatever remains is the hang.
 
 ## Redmine model internals in serialization
 
