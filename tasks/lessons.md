@@ -37,6 +37,15 @@
   says an endpoint was slow; only the list of requests still in flight says it
   hung. Track requests from the `request` event and remove them on
   `requestfinished` / `requestfailed`, so whatever remains is the hang.
+- A measurement tool that forces a code path is invalidated by the change it
+  measured. `compare_issue_load_strategies.rb` forced its preload arm by
+  redirecting `includes`; once the resolver itself called `preload`, both arms
+  measured preload and agreed to within 0.01 s. Any harness that overrides a
+  production call must assert that the override took effect, and say so in its
+  output, because the failure looks like agreement rather than like an error.
+- A committed test that a load run has to edit before it can run is not
+  reproducible. Take the project identifier and credentials from the
+  environment, defaulting to the CI fixture values, so the same file serves both.
 
 ## Redmine model internals in serialization
 

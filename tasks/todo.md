@@ -32,8 +32,15 @@
   `includes`. Coverage: the resolver spec asserts the load method directly, and
   `spec/lib/redmine_canvas_gantt/query_state_resolver_load_strategy_spec.rb`
   runs both strategies against real models and compares the serialized tasks.
-- Still open: the post-deploy 10,000-issue endpoint and browser re-measurement
-  on the validation host.
+- Re-measured on the validation host after deployment: `data.json` went from
+  9.684 s / 72 queries to about 5.2 s / 80 queries, issue resolution from about
+  6.1 s to 2.654 s. Backend specs pass there on PostgreSQL 16 (312 examples, 0
+  failures, 11 pending).
+- `tools/performance/compare_issue_load_strategies.rb` had to be fixed as part
+  of this: it forced its preload arm by redirecting `includes`, which the
+  deployed resolver no longer calls, so both arms silently ran preload. Each arm
+  now redirects the method it does not want, and the script reports
+  `comparison_valid: false` when both arms produce the same SQL shape.
 
 ## Done: make the Redmine smoke test report per-request timing
 
@@ -52,3 +59,11 @@
 - Verified against a real Redmine 6.1: a slow run reports
   `completed ... HTTP 200 in 205 ms`, and a stalled endpoint reports
   `UNFINISHED ... no response`, both alongside the timeout.
+- At 10,000 issues on the validation host the test passes on the original
+  60-second timeout (37.3 / 36.3 / 36.3 s). Its per-request lines showed the two
+  data requests overlapping and contending for CPU, which is why each reports
+  about 11 s of server time against a 5.2 s single-request profile.
+- `CANVAS_GANTT_SMOKE_PROJECT`, `CANVAS_GANTT_SMOKE_LOGIN` and
+  `CANVAS_GANTT_SMOKE_PASSWORD` point the test at a load-test project and
+  account. The first load run had to patch the committed test to do this, which
+  is exactly what stops a run being reproducible.

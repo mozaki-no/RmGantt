@@ -310,9 +310,21 @@ both changes stay independently reviewable.
 
 The change has since landed: `QueryStateResolver#issues_scope_for` calls
 `preload`, with resolver coverage for the load method and a real-model spec
-comparing the serialized tasks under both strategies. The 10,000-issue endpoint
-and browser numbers above therefore predate it and need one more run on the
-validation host.
+comparing the serialized tasks under both strategies. It was then deployed to
+the validation host and re-measured:
+
+| Metric | Before #8 | After #8 | After #9 |
+| --- | ---: | ---: | ---: |
+| `data.json` wall time | 28.310 s | 9.684 s | about 5.2 s |
+| Rails request-log SQL queries | 8,369 | 72 | 80 |
+| Issue resolution | about 7.0 s | about 6.1 s | 2.654 s |
+| Version serialization | 17.652 s | 0.636 s | 0.237 s |
+
+The query count is constant in the issue count at every step; #9 adds eight
+per-association preloads and removes the joined eager load. The smoke test now
+passes at 10,000 issues on the original 60-second timeout in about 36 seconds.
+Full numbers, including the per-request browser timings, are in
+[`2026-09-11-issue-load-strategy.md`](2026-09-11-issue-load-strategy.md).
 
 ## Expected impact and completion criteria
 

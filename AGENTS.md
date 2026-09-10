@@ -87,6 +87,7 @@ cd spa && npx vitest run src/components/GanttContainer.resize.test.tsx
 
   * `CANVAS_GANTT_SMOKE_TIMEOUT_MS` overrides the 60-second per-test timeout. Leave it unset for the fixture-sized CI suite; set it for a large-project load run, where the data requests alone can exceed the default.
   * `CANVAS_GANTT_SMOKE_DATA_BUDGET_MS` fails the test when a data request is slower than the given budget, so "slow" fails as slow instead of as a timeout. Unset means no budget is enforced.
+  * `CANVAS_GANTT_SMOKE_PROJECT` selects the project the smoke test opens; it defaults to the `ecookbook` fixture project. `CANVAS_GANTT_SMOKE_LOGIN` and `CANVAS_GANTT_SMOKE_PASSWORD` override the Redmine account the whole Redmine-integrated suite logs in with, defaulting to `admin` / `admin`. Point a load run at its own project and account with these rather than editing the test.
 * Example of running the targeted compatibility suite against Redmine 6.0:
 
 ```bash

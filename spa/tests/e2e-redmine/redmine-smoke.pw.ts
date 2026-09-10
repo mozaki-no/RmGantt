@@ -64,6 +64,9 @@ test.afterEach(() => {
 
 test('renders canvas gantt page in Redmine', async ({ page, baseURL }) => {
   const redmineBase = baseURL ?? 'http://127.0.0.1:3000';
+  // The fixture project for CI, overridable so the same test can be pointed at
+  // a load-test project without editing this file.
+  const projectIdentifier = process.env.CANVAS_GANTT_SMOKE_PROJECT?.trim() || 'ecookbook';
   const relativeRoot = new URL(redmineBase).pathname.replace(/\/$/, '');
   const expectedAssetPrefix = `${relativeRoot}/plugin_assets/redmine_canvas_gantt/build/`;
   const consoleErrors: string[] = [];
@@ -135,7 +138,7 @@ test('renders canvas gantt page in Redmine', async ({ page, baseURL }) => {
 
   await adminLogin(redmineBase, page);
 
-  await page.goto(`${redmineBase}/projects/ecookbook/canvas_gantt`);
+  await page.goto(`${redmineBase}/projects/${projectIdentifier}/canvas_gantt`);
   await expect(page.locator('#redmine-canvas-gantt-root')).toBeVisible();
   await expect(page.getByRole('heading', { name: '403' })).toHaveCount(0);
 

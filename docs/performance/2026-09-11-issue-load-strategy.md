@@ -157,7 +157,63 @@ Coverage added with the change, against the checklist above:
    constant at all three sizes under both strategies - the same eight extra
    queries the 3-to-11 change shows at 10,000 issues.
 
-Item 4 remains outstanding: it needs the validation host, which holds the only
-10,000-issue data set. Rerun the segment profile and the Playwright load run
-there and record the numbers in
-[`2026-09-09-10000-issue-investigation.md`](2026-09-09-10000-issue-investigation.md).
+## Deployed measurement (2026-09-11, validation host)
+
+Item 4 is now done. The change was deployed to the same Redmine 6.1.1 /
+PostgreSQL 16 validation host and re-measured on `canvas-load-01`.
+
+The backend specs pass there: 312 examples, 0 failures, 11 pending (the pending
+ones require the MySQL/MariaDB adapter). That run is the first on PostgreSQL,
+which matters because the new load-strategy spec inspects SQL text.
+
+Segment profile, three runs, seconds:
+
+| Segment | Median | Uncached queries |
+| --- | ---: | ---: |
+| resolve_issues | 2.654 | 11 |
+| build_tasks | 1.859 | 25 |
+| build_project_custom_fields | 0.058 | 1 |
+| build_versions | 0.237 | 4 |
+| build_project_payload | 0.022 | 8 |
+| load_relations | 0.394 | 1 |
+| Total | **5.223** | **50** |
+
+Issue resolution went from about 6.1 seconds to 2.654 seconds, and the whole
+`data.json` request from 9.684 seconds and 72 queries to about 5.2 seconds and
+80 queries in the Rails request log. The query count is constant in the issue
+count; only the per-association preloads were added.
+
+### The comparison script had to be fixed first
+
+The first re-run of `compare_issue_load_strategies.rb` on the deployed code
+reported both arms at 11 queries, zero joined issue selects, and medians within
+0.01 s of each other. That was not a result: the script forced its `preload` arm
+by redirecting `includes`, and the deployed resolver no longer calls `includes`,
+so both arms ran preload. The script now redirects whichever method the arm does
+not want, and refuses to present a run as a comparison when both arms produce the
+same issue-load SQL shape - it prints `comparison_valid: false` and a loud
+warning. Re-measure with the fixed script if an `includes`-versus-`preload`
+number is wanted again on the deployed code.
+
+## Smoke test at 10,000 issues
+
+The instrumented smoke test (GitHub issue #10) passes at 10,000 issues on the
+**default 60-second timeout**, three runs: 37.3 s, 36.3 s, 36.3 s. It previously
+needed `--timeout 180000`, and before the version-progress fix it failed the
+60-second default outright. No request was reported unfinished.
+
+The per-request lines from a representative run:
+
+```text
+[canvas-gantt] initial load: HTTP 200 in 11407 ms (server 11298 ms) .../canvas_gantt/data.json
+[canvas-gantt] member_projects_only validation: HTTP 200 in 20572 ms (server 11179 ms) .../canvas_gantt/data.json?member_projects_only=1
+```
+
+Those server times are roughly twice the 5.2 seconds the segment profile
+measures for one request in isolation, and the instrumentation is what made the
+reason visible: the Redmine log shows the second request starting about 0.5-0.8
+seconds after the first, so the two 10,000-issue requests overlap and contend
+for CPU. A separate single-request measurement on the same host totalled about
+5.46 seconds, which matches. This is a property of the test - it deliberately
+issues both requests - not of the endpoint, and it is the kind of thing the
+old report could not have shown.

@@ -23,11 +23,28 @@ User.current = user
 project_ids = project.self_and_descendants.pluck(:id)
 params = ActionController::Parameters.new({})
 
-module ExplicitIssuePreload
+# The call being measured is the resolver's own, and it has already changed
+# once: `issues_scope_for` called `includes` when this script was written and
+# calls `preload` now. So each arm redirects the *other* method onto the one it
+# wants, and forces its strategy whichever method the resolver happens to call.
+# Exactly one module is applied per arm, so a redirect can never bounce back
+# into the other one.
+module ForceJoinedEagerLoad
+  def preload(*associations)
+    includes(*associations)
+  end
+end
+
+module ForceSeparatePreload
   def includes(*associations)
     preload(*associations)
   end
 end
+
+STRATEGY_EXTENSIONS = {
+  includes: ForceJoinedEagerLoad,
+  preload: ForceSeparatePreload
+}.freeze
 
 def percentile(values, fraction)
   sorted = values.sort
@@ -48,8 +65,7 @@ def profile_issue_resolution(strategy:, project:, project_ids:, params:, user:)
     }
   end
 
-  issue_scope = Issue.visible
-  issue_scope = issue_scope.extending(ExplicitIssuePreload) if strategy == :preload
+  issue_scope = Issue.visible.extending(STRATEGY_EXTENSIONS.fetch(strategy))
   resolver = RedmineCanvasGantt::QueryStateResolver.new(
     project: project,
     params: params,
@@ -154,4 +170,29 @@ summaries = %i[includes preload].map do |strategy|
   }
 end
 
-puts({ event: 'summary', results: summaries }.to_json)
+# Both arms return the same records by design, so a broken arm does not show up
+# as a wrong number - it shows up as two arms that agree. The joined arm must
+# produce a LEFT OUTER JOIN on the issue load and the preload arm must not; when
+# that does not hold, this run compared a strategy with itself and its timings
+# mean nothing.
+def joined_issue_load?(summary)
+  summary.fetch(:left_outer_join_issue_selects).all?(&:positive?)
+end
+
+def summary_for(summaries, strategy)
+  summaries.find { |summary| summary.fetch(:strategy) == strategy } ||
+    raise(KeyError, "no summary for #{strategy}")
+end
+
+comparison_valid = joined_issue_load?(summary_for(summaries, :includes)) &&
+                   !joined_issue_load?(summary_for(summaries, :preload))
+
+puts({ event: 'summary', comparison_valid: comparison_valid, results: summaries }.to_json)
+
+unless comparison_valid
+  warn(
+    'INVALID COMPARISON: the two arms produced the same issue-load SQL shape. ' \
+    'This run measured one strategy against itself, not includes against preload. ' \
+    'Check that the relation extensions still cover the method QueryStateResolver calls.'
+  )
+end
