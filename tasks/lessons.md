@@ -24,6 +24,10 @@
   preload used 11 queries instead of 3 but cut issue resolution by about two
   thirds and allocations by about 60%; keep query-count checks focused on
   growth with issue count, not on minimizing the absolute number alone.
+- A spec that compares two association-loading strategies has to force the
+  other one, and prove it forced it. Both strategies return the same records by
+  design, so a parity spec that does not assert differing SQL keeps passing
+  after a revert, comparing two runs of the same strategy.
 
 ## Redmine model internals in serialization
 

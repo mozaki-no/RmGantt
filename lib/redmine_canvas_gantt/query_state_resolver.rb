@@ -545,7 +545,16 @@ module RedmineCanvasGantt
       scope = apply_version_filter(scope, state[:selected_version_ids]) if state[:selected_version_ids].present?
       scope = apply_assignee_filter(scope, state[:selected_assignee_ids]) if state[:selected_assignee_ids].present?
       scope = scope.where(tracker_id: state[:selected_tracker_ids]) if state[:selected_tracker_ids].present?
-      scope.includes(*@issue_includes)
+      # Every filter above is a plain issues column and sorting happens in Ruby,
+      # so no SQL predicate references these associations - they are read only
+      # while serializing. `includes` was free to answer that with a joined
+      # eager load, and on the bounded scope Rails chose one: a DISTINCT id
+      # query plus a very wide LEFT OUTER JOIN. `preload` asks for the separate
+      # queries explicitly. It trades three queries for eleven, but both counts
+      # are constant in the issue count, and at 10,000 issues it cut the median
+      # load from 6.115s to 2.034s and allocations by 59.6%. See
+      # docs/performance/2026-09-11-issue-load-strategy.md.
+      scope.preload(*@issue_includes)
     end
 
     def project_scope_ids(project_ids, selected_project_ids)

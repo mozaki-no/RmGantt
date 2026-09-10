@@ -308,6 +308,12 @@ the method, individual samples, independent confirmation run, and recommended
 implementation checks. This remains separate from the version-progress fix so
 both changes stay independently reviewable.
 
+The change has since landed: `QueryStateResolver#issues_scope_for` calls
+`preload`, with resolver coverage for the load method and a real-model spec
+comparing the serialized tasks under both strategies. The 10,000-issue endpoint
+and browser numbers above therefore predate it and need one more run on the
+validation host.
+
 ## Expected impact and completion criteria
 
 Eliminating the version N+1 should remove roughly 17 seconds and more than

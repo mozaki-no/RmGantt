@@ -121,3 +121,43 @@ remain a separate change for GitHub issue #9 and should include:
 2. task-payload parity coverage;
 3. the existing 1/100/1,000 issue query-count regression;
 4. a fresh 10,000-issue endpoint and browser measurement after deployment.
+
+## Implementation
+
+`QueryStateResolver#issues_scope_for` now ends with `preload(*@issue_includes)`
+instead of `includes(*@issue_includes)`. Nothing else changed: every filter in
+that method compares a plain `issues` column, and sorting runs in Ruby over the
+loaded records, so no SQL predicate references the associations and none of
+them needs to be joined.
+
+`DataPayloadBudget#load_records` still bounds the load. It reads `limit + 1`
+records and raises when the count exceeds the limit, so a truncated result is
+never served under either strategy and the arbitrary subset an unordered
+`LIMIT` would pick cannot reach the payload.
+
+Coverage added with the change, against the checklist above:
+
+1. `spec/lib/redmine_canvas_gantt/query_state_resolver_spec.rb` asserts that the
+   resolver calls `preload` and never `includes`. A joined eager load and a
+   preloaded load are indistinguishable in the result, so the strategy has to
+   be asserted as a call rather than inferred from the records.
+2. `spec/lib/redmine_canvas_gantt/query_state_resolver_load_strategy_spec.rb`
+   resolves the same real issues under both strategies — the second through a
+   relation extension that redirects `preload` back to `includes`, the mirror
+   image of the measurement script — and compares the issue set and the
+   serialized task state of every issue. It also asserts that reading each
+   preloaded association costs no query, and that the two strategies really do
+   produce different SQL, so a revert cannot leave the parity examples passing
+   against two runs of the same strategy.
+3. `spec/controllers/canvas_gantts_data_performance_spec.rb` is unchanged and
+   still gates query-count growth at 1, 100, and 1,000 issues. It asserts that
+   the count is equal across those sizes rather than equal to a fixed number,
+   so the higher constant this change introduces does not weaken the gate. On
+   that fixture-sized data the endpoint went from 62 to 70 uncached queries,
+   constant at all three sizes under both strategies - the same eight extra
+   queries the 3-to-11 change shows at 10,000 issues.
+
+Item 4 remains outstanding: it needs the validation host, which holds the only
+10,000-issue data set. Rerun the segment profile and the Playwright load run
+there and record the numbers in
+[`2026-09-09-10000-issue-investigation.md`](2026-09-09-10000-issue-investigation.md).

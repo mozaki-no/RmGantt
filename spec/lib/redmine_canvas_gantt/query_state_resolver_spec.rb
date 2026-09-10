@@ -77,7 +77,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(working_query).to receive(:filters=)
     allow(working_query).to receive(:column_names).and_return([])
     allow(issue_scope).to receive(:where).and_return(issue_scope)
-    allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
+    allow(issue_scope).to receive(:preload).with(*issue_includes).and_return(issue_scope)
     allow(issue_scope).to receive(:to_a).and_return([])
   end
 
@@ -267,7 +267,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     filtered_scope = double('FilteredScope')
     expect(issue_scope).to receive(:where).with(project_id: [1, 2]).and_return(issue_scope)
     expect(issue_scope).to receive(:where).with(tracker_id: [3, 4]).and_return(filtered_scope)
-    allow(filtered_scope).to receive(:includes).with(*issue_includes).and_return(filtered_scope)
+    allow(filtered_scope).to receive(:preload).with(*issue_includes).and_return(filtered_scope)
     allow(filtered_scope).to receive(:to_a).and_return([])
 
     result = build_resolver(
@@ -525,7 +525,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect(issue_scope).to receive(:where).with(project_id: [1, 2]).and_return(issue_scope)
     expect(issue_scope).to receive(:where).with(id: [12]).and_return(issue_scope)
     expect(issue_scope).to receive(:where).with(fixed_version_id: nil).and_return(filtered_scope)
-    expect(filtered_scope).to receive(:includes).with(*issue_includes).and_return(filtered_scope)
+    expect(filtered_scope).to receive(:preload).with(*issue_includes).and_return(filtered_scope)
     allow(filtered_scope).to receive(:to_a).and_return([])
 
     resolver = build_resolver(
@@ -670,6 +670,23 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect { resolver.resolve(project_ids: [1, 2]) }.to raise_error(overflow)
   end
 
+  describe 'association loading' do
+    # No filter in issues_scope_for touches these associations - every one of
+    # them is a plain issues column - and sorting happens in Ruby afterwards,
+    # so they are read only while serializing. `includes` left the strategy to
+    # Rails, which answered the bounded scope with a DISTINCT id query plus a
+    # wide LEFT OUTER JOIN; at 10,000 issues that join cost about three times
+    # the separate queries. The strategy is the whole point of the change and
+    # a joined load is indistinguishable from a preloaded one in the payload,
+    # so assert the call rather than the result.
+    it 'preloads the serialization associations rather than leaving the strategy to Rails' do
+      expect(issue_scope).to receive(:preload).with(*issue_includes).and_return(issue_scope)
+      expect(issue_scope).not_to receive(:includes)
+
+      build_resolver(spent_hours_preloader: null_spent_hours_preloader).resolve(project_ids: [1])
+    end
+  end
+
   describe 'spent time preloading' do
     # The preloader is injected rather than stubbed on the constant, so these
     # examples assert against the collaborator the resolver was handed.
@@ -681,7 +698,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
 
     def resolve_with(issues, extra_params = {})
       allow(issue_scope).to receive(:where).and_return(issue_scope)
-      allow(issue_scope).to receive(:includes).with(*issue_includes).and_return(issue_scope)
+      allow(issue_scope).to receive(:preload).with(*issue_includes).and_return(issue_scope)
       allow(issue_scope).to receive(:to_a).and_return(issues)
 
       build_resolver(

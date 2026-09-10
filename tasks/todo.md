@@ -6,7 +6,9 @@
 - GitHub issue: #8.
 - Evidence: [`docs/performance/2026-09-09-10000-issue-investigation.md`](../docs/performance/2026-09-09-10000-issue-investigation.md)
 - The data endpoint now runs a constant 62 uncached queries at 1, 100, and
-  1,000 issues; it ran 76, 484, and 4,084 before.
+  1,000 issues; it ran 76, 484, and 4,084 before. The issue-load change below
+  later raised that constant to 70; the spec asserts constancy across issue
+  counts rather than the absolute figure.
 
 ## Done: rerun the 10,000-issue measurements
 
@@ -17,7 +19,7 @@
   issues. Payload size and browser completion results are recorded in the
   investigation document.
 
-## Measured: optimize the seven-second issue load
+## Done: optimize the seven-second issue load
 
 - GitHub issue #9. The 2026-09-11 comparison confirmed that explicit `preload`
   reduces the 10,000-issue median from 6.115 seconds to 2.034 seconds while
@@ -26,7 +28,12 @@
   issues. Median Ruby object allocations fall by 59.6%.
 - Evidence:
   [`docs/performance/2026-09-11-issue-load-strategy.md`](../docs/performance/2026-09-11-issue-load-strategy.md)
-- The production change and its regression coverage remain open.
+- `QueryStateResolver#issues_scope_for` now calls `preload` instead of
+  `includes`. Coverage: the resolver spec asserts the load method directly, and
+  `spec/lib/redmine_canvas_gantt/query_state_resolver_load_strategy_spec.rb`
+  runs both strategies against real models and compares the serialized tasks.
+- Still open: the post-deploy 10,000-issue endpoint and browser re-measurement
+  on the validation host.
 
 ## Open: make the Redmine smoke test report per-request timing
 
