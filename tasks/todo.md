@@ -41,6 +41,10 @@
   deployed resolver no longer calls, so both arms silently ran preload. Each arm
   now redirects the method it does not want, and the script reports
   `comparison_valid: false` when both arms produce the same SQL shape.
+- The fixed script then produced the first valid post-deploy comparison at
+  10,000 issues: `includes` 5.935 s / 3 queries / 2 joined issue selects,
+  `preload` 2.018 s / 11 queries / 0 joined issue selects, `comparison_valid:
+  true`.
 
 ## Done: make the Redmine smoke test report per-request timing
 
@@ -66,4 +70,7 @@
 - `CANVAS_GANTT_SMOKE_PROJECT`, `CANVAS_GANTT_SMOKE_LOGIN` and
   `CANVAS_GANTT_SMOKE_PASSWORD` point the test at a load-test project and
   account. The first load run had to patch the committed test to do this, which
-  is exactly what stops a run being reproducible.
+  is exactly what stops a run being reproducible. The following run needed no
+  edit: the test file's checksum after the run matched the deployed archive.
+- The budget was exercised at 10,000 issues: 60,000 ms passes, 5,000 ms fails as
+  an assertion naming both requests and their times, not as a timeout.

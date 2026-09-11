@@ -192,8 +192,20 @@ by redirecting `includes`, and the deployed resolver no longer calls `includes`,
 so both arms ran preload. The script now redirects whichever method the arm does
 not want, and refuses to present a run as a comparison when both arms produce the
 same issue-load SQL shape - it prints `comparison_valid: false` and a loud
-warning. Re-measure with the fixed script if an `includes`-versus-`preload`
-number is wanted again on the deployed code.
+warning.
+
+Re-run with the fixed script on the deployed code, five samples, reporting
+`comparison_valid: true`:
+
+| Strategy | Median | Min-max | Queries | Issue SELECTs | Joined issue SELECTs | Median allocated objects |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `includes` | 5.935 s | 5.885-5.999 s | 3 | 2 | 2 | 1,806,410 |
+| `preload` | 2.018 s | 1.969-2.033 s | 11 | 1 | 0 | 728,808 |
+
+Both arms returned 10,000 issues, 10,000 unique. This is the same shape as the
+pre-deploy comparison at the top of this document (6.115 s against 2.034 s),
+measured now with the resolver already calling `preload`, so it confirms the
+original numbers rather than restating them.
 
 ## Smoke test at 10,000 issues
 
@@ -208,6 +220,12 @@ The per-request lines from a representative run:
 [canvas-gantt] initial load: HTTP 200 in 11407 ms (server 11298 ms) .../canvas_gantt/data.json
 [canvas-gantt] member_projects_only validation: HTTP 200 in 20572 ms (server 11179 ms) .../canvas_gantt/data.json?member_projects_only=1
 ```
+
+The opt-in budget was exercised at this size too. At
+`CANVAS_GANTT_SMOKE_DATA_BUDGET_MS=60000` the run passes; at `5000` it fails as
+an assertion rather than a timeout, in 34.4 seconds, naming both requests and
+their measured times, with neither reported unfinished. That is the behaviour
+issue #10 asked for: slow fails as slow.
 
 Those server times are roughly twice the 5.2 seconds the segment profile
 measures for one request in isolation, and the instrumentation is what made the
