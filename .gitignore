@@ -8,6 +8,7 @@ docs/architecture/*
 !docs/architecture/timer-session-architecture.png
 docs/performance/*
 !docs/performance/2026-09-09-10000-issue-investigation.md
+!docs/performance/2026-09-11-issue-load-strategy.md
 graphify-out/
 spec-docs/
 DESIGN.md
