@@ -1,17 +1,19 @@
 require 'set'
 require_relative 'mutation_authorization_policy'
+require_relative 'spent_hours_batch'
 
 module RedmineCanvasGantt
   class DataPayloadBuilder
     def initialize(custom_field_extractor:, current_user:, data_payload_budget: nil, authorization_policy: nil)
       @custom_field_extractor = custom_field_extractor
+      @current_user = current_user
       @data_payload_budget = data_payload_budget
       @authorization_policy = authorization_policy || MutationAuthorizationPolicy.new(current_user: current_user)
     end
 
-    def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_issues:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil)
+    def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_issues:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil, spent_hours_by_issue_id: nil)
       {
-        tasks: build_tasks(issues),
+        tasks: build_tasks(issues, spent_hours_by_issue_id: spent_hours_by_issue_id),
         custom_fields: @custom_field_extractor.build_project_custom_fields(project_ids, issues),
         relations: relations ? build_relations_from(relations) : build_relations(issues),
         versions: build_versions(project_ids),
@@ -31,11 +33,12 @@ module RedmineCanvasGantt
       }.compact
     end
 
-    def build_tasks(issues)
+    def build_tasks(issues, spent_hours_by_issue_id: nil)
       can_log_time_by_project_id = {}
+      spent_hours_by_issue_id ||= SpentHoursBatch.for(issues, current_user: @current_user)
 
       issues.each_with_index.map do |issue, idx|
-        build_task_state(issue).merge(
+        build_task_state(issue, spent_hours: spent_hours_by_issue_id.fetch(issue.id, 0.0)).merge(
           display_order: idx,
           editable: @authorization_policy.can_edit_issue?(issue),
           can_log_time: can_log_time_by_project_id.fetch(issue.project_id) do
@@ -45,10 +48,16 @@ module RedmineCanvasGantt
       end
     end
 
+    def build_task_states(issues)
+      hours = SpentHoursBatch.for(issues, current_user: @current_user)
+      issues.map { |issue| build_task_state(issue, spent_hours: hours.fetch(issue.id, 0.0)) }
+    end
+
     # Mutation responses must describe the persisted Issue only.  In
     # particular, display_order and other collection/layout values belong to
     # the current query and are not canonical entity state.
-    def build_task_state(issue)
+    def build_task_state(issue, spent_hours: nil)
+      spent_hours = SpentHoursBatch.for([issue], current_user: @current_user).fetch(issue.id, 0.0) if spent_hours.nil?
       {
           id: issue.id,
           subject: issue.subject,
@@ -77,7 +86,7 @@ module RedmineCanvasGantt
           estimated_hours: issue.estimated_hours,
           created_on: issue.created_on,
           updated_on: issue.updated_on,
-          spent_hours: issue.spent_hours,
+          spent_hours: spent_hours,
           fixed_version_name: issue.fixed_version&.name,
           custom_field_values: @custom_field_extractor.build_task_custom_field_values(issue)
       }

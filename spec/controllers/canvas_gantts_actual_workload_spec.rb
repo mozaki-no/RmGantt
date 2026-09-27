@@ -57,6 +57,52 @@ RSpec.describe CanvasGanttsController, type: :controller do
     )
   end
 
+  it 'keeps child issues but excludes an unrelated visible project from data and actual workload' do
+    child = Project.create!(name: 'Canvas child', identifier: 'canvas-gantt-child', parent: project, is_public: true)
+    child.enable_module!(:issue_tracking)
+    child.enable_module!(:time_tracking)
+    child.enable_module!(:canvas_gantt)
+    child_issue = issue.copy
+    child_issue.project = child
+    child_issue.subject = 'Child scope issue'
+    child_issue.save!
+    outside_issue = Issue.find(4)
+    outside_issue.project.enable_module!(:time_tracking)
+    entry(hours: 2, user_id: 1, issue_id: child_issue.id)
+    entry(hours: 3, user_id: 1, issue_id: outside_issue.id)
+    selection = [child.id.to_s, outside_issue.project_id.to_s]
+
+    get :data, params: { project_id: project.id, format: :json, canvas_project_ids: selection }
+    expect(response).to have_http_status(:ok)
+    tasks = JSON.parse(response.body).fetch('tasks')
+    data_ids = tasks.map { |task| task.fetch('id') }
+    expect(data_ids).to include(child_issue.id)
+    expect(data_ids).not_to include(outside_issue.id)
+    expect(tasks.find { |task| task.fetch('id') == child_issue.id }.fetch('spent_hours')).to eq(2.0)
+
+    get :data, params: { project_id: project.id, format: :json, member_projects_only: '1' }
+    expect(response).to have_http_status(:ok)
+    option_ids = JSON.parse(response.body).fetch('filter_options').fetch('projects').map { |option| option.fetch('id') }
+    expect(option_ids).to include(project.id, child.id)
+    expect(option_ids).not_to include(outside_issue.project_id)
+
+    fetch_actual(canvas_project_ids: selection)
+    expect(response).to have_http_status(:ok)
+    expect(JSON.parse(response.body).fetch('entries').map { |row| row['issueId'] })
+      .to eq([child_issue.id.to_s])
+  end
+
+  it 'returns no data or actual workload for an explicit empty project selection' do
+    entry(hours: 2)
+    get :data, params: { project_id: project.id, format: :json, canvas_project_ids: ['none'] }
+    expect(response).to have_http_status(:ok)
+    expect(JSON.parse(response.body).fetch('tasks')).to eq([])
+
+    fetch_actual(canvas_project_ids: ['none'])
+    expect(response).to have_http_status(:ok)
+    expect(JSON.parse(response.body).fetch('entries')).to eq([])
+  end
+
   it 'rejects missing, reversed and excessive date ranges' do
     [ { from: '' }, { from: '2026-09-08' }, { to: '2040-01-01' } ].each do |params|
       fetch_actual(params)
@@ -144,6 +190,174 @@ RSpec.describe CanvasGanttsController, type: :controller do
     User.current = User.find(2)
     fetch_actual
     expect(response).to have_http_status(:forbidden)
+  end
+
+  it 'uses the same visible hours for data, sorting, and actual workload' do
+    role = Role.find(1)
+    role.update!(permissions: role.permissions | [:view_canvas_gantt, :view_time_entries], time_entries_visibility: 'own')
+    second_issue = issue.copy
+    second_issue.subject = 'Hours sort comparison'
+    second_issue.save!
+    entry(hours: 2, user_id: 2)
+    entry(hours: 3, user_id: 3)
+    entry(hours: 1, user_id: 2, issue_id: second_issue.id)
+    entry(hours: 6, user_id: 3, issue_id: second_issue.id)
+
+    [
+      [User.find(1), [5.0, 7.0]],
+      [User.find(2), [2.0, 1.0]]
+    ].each do |user, expected|
+      controller.send(:start_user_session, user)
+      User.current = user
+      get :data, params: { project_id: project.id, format: :json, sort: 'spent_hours:desc' }
+      expect(response).to have_http_status(:ok)
+      tasks = JSON.parse(response.body).fetch('tasks')
+      hours = tasks.to_h { |task| [task.fetch('id'), task.fetch('spent_hours')] }
+      expect([hours.fetch(issue.id), hours.fetch(second_issue.id)]).to eq(expected)
+      selected = tasks.select { |task| [issue.id, second_issue.id].include?(task.fetch('id')) }
+      expect(selected.map { |task| task.fetch('spent_hours') }).to eq(expected.sort.reverse)
+
+      fetch_actual
+      expect(response).to have_http_status(:ok)
+      visible_hours = JSON.parse(response.body).fetch('entries').sum { |row| row.fetch('hours') }
+      expect(visible_hours).to eq(expected.sum)
+    end
+
+    role.update!(permissions: role.permissions - [:view_time_entries])
+    user = User.find(2)
+    controller.send(:start_user_session, user)
+    User.current = user
+    get :data, params: { project_id: project.id, format: :json, sort: 'spent_hours:desc' }
+    expect(response).to have_http_status(:ok)
+    tasks = JSON.parse(response.body).fetch('tasks')
+    expect(tasks.select { |task| [issue.id, second_issue.id].include?(task.fetch('id')) }
+      .map { |task| task.fetch('spent_hours') }).to eq([0.0, 0.0])
+    fetch_actual
+    expect(JSON.parse(response.body).fetch('entries')).to eq([])
+  end
+
+  it 'includes visible child issues in data and actual workload without child Canvas access' do
+    role = Role.find(1)
+    role.update!(permissions: role.permissions | [:view_canvas_gantt, :view_issues, :view_time_entries], time_entries_visibility: 'own')
+    child = Project.create!(name: 'Canvas permission child', identifier: 'canvas-permission-child', parent: project, is_public: true)
+    child.enable_module!(:issue_tracking)
+    child.enable_module!(:time_tracking)
+    Member.create!(project: child, user: User.find(2), roles: [role])
+    child_issue = issue.copy
+    child_issue.project = child
+    child_issue.subject = 'Visible child without Canvas module'
+    child_issue.save!
+    entry(hours: 2, user_id: 2, issue_id: child_issue.id)
+    user = User.find(2)
+    controller.send(:start_user_session, user)
+    User.current = user
+
+    expect(child.module_enabled?(:canvas_gantt)).to be(false)
+    get :data, params: { project_id: project.id, format: :json, canvas_project_ids: [child.id.to_s] }
+    expect(response).to have_http_status(:ok)
+    tasks = JSON.parse(response.body).fetch('tasks')
+    expect(tasks.map { |task| task.fetch('id') }).to include(child_issue.id)
+    expect(tasks.find { |task| task.fetch('id') == child_issue.id }.fetch('spent_hours')).to eq(2.0)
+
+    fetch_actual(canvas_project_ids: [child.id.to_s])
+    expect(response).to have_http_status(:ok)
+    expect(JSON.parse(response.body).fetch('entries').map { |row| row.fetch('issueId') })
+      .to include(child_issue.id.to_s)
+  end
+
+  it 'runs the hours aggregation once for spent-hours sorting and skips empty selections' do
+    entry(hours: 2)
+    aggregated = []
+    subscriber = ActiveSupport::Notifications.subscribe('sql.active_record') do |_name, _started, _finished, _id, payload|
+      sql = payload[:sql].to_s
+      aggregated << sql if sql.match?(/SUM\([^)]*hours[^)]*\)/i) && sql.include?('time_entries')
+    end
+    begin
+      get :data, params: { project_id: project.id, format: :json, sort: 'spent_hours:desc' }
+      expect(response).to have_http_status(:ok)
+      expect(aggregated.length).to eq(1)
+
+      aggregated.clear
+      get :data, params: { project_id: project.id, format: :json, sort: 'subject:asc' }
+      expect(response).to have_http_status(:ok)
+      expect(aggregated.length).to eq(1)
+
+      aggregated.clear
+      get :data, params: { project_id: project.id, format: :json, canvas_project_ids: ['none'] }
+      expect(response).to have_http_status(:ok)
+      expect(aggregated).to be_empty
+    ensure
+      ActiveSupport::Notifications.unsubscribe(subscriber)
+    end
+  end
+
+  it 'uses visible hours in single and batch mutation task states' do
+    role = Role.find(1)
+    role.update!(permissions: role.permissions | [:view_canvas_gantt, :view_time_entries, :edit_issues], time_entries_visibility: 'own')
+    entry(hours: 2, user_id: 2)
+    entry(hours: 3, user_id: 3)
+    user = User.find(2)
+    controller.send(:start_user_session, user)
+    User.current = user
+
+    patch :update, params: { project_id: project.id, id: issue.id, format: :json,
+      task: { subject: 'Updated without hidden hours', lock_version: issue.lock_version } }
+    expect(response).to have_http_status(:ok)
+    expect(JSON.parse(response.body).fetch('entity').fetch('spent_hours')).to eq(2.0)
+
+    builder = controller.send(:data_payload_builder)
+    expect(builder.build_task_states([issue.reload]).first.fetch(:spent_hours)).to eq(2.0)
+    role.update!(permissions: role.permissions - [:view_time_entries])
+    User.current = User.find(2)
+    builder = RedmineCanvasGantt::DataPayloadBuilder.new(
+      custom_field_extractor: controller.send(:custom_field_extractor), current_user: User.current
+    )
+    expect(builder.build_task_state(issue).fetch(:spent_hours)).to eq(0.0)
+    expect(builder.build_task_states([issue]).first.fetch(:spent_hours)).to eq(0.0)
+  end
+
+  it 'returns visible hours for every issue in a real batched schedule mutation with one aggregate query' do
+    role = Role.find(1)
+    role.update!(permissions: role.permissions | [:view_canvas_gantt, :view_time_entries, :edit_issues],
+                 time_entries_visibility: 'own')
+    user = User.find(2)
+    controller.send(:start_user_session, user)
+    User.current = user
+    issues = ['First batch issue', 'Second batch issue'].map do |subject|
+      copy = issue.copy
+      copy.subject = subject
+      copy.author = user
+      copy.start_date = Date.new(2027, 3, 1)
+      copy.due_date = Date.new(2027, 3, 2)
+      copy.save!
+      copy
+    end
+    entry(hours: 2, user_id: 2, issue_id: issues.first.id)
+    entry(hours: 3, user_id: 3, issue_id: issues.first.id)
+    entry(hours: 1, user_id: 2, issue_id: issues.last.id)
+    entry(hours: 6, user_id: 3, issue_id: issues.last.id)
+
+    aggregate_sql = []
+    subscriber = ActiveSupport::Notifications.subscribe('sql.active_record') do |_name, _started, _finished, _id, payload|
+      sql = payload[:sql].to_s
+      aggregate_sql << sql if sql.match?(/SUM\([^)]*hours[^)]*\)/i) && sql.include?('time_entries')
+    end
+    begin
+      post :schedule_mutation, params: {
+        project_id: project.id, format: :json, operation_id: 'visible-hours-batch',
+        date_placement_mode: 'calendar_days',
+        base_revisions: issues.to_h { |item| [item.id.to_s, item.reload.lock_version] },
+        changes: issues.map { |item| { task_id: item.id, start_date: '2027-03-03', due_date: '2027-03-04' } }
+      }
+      expect(response).to have_http_status(:ok), response.body
+      payload = JSON.parse(response.body)
+      expect(payload.fetch('status')).to eq('ok')
+      expect(payload.fetch('entities').to_h { |entity| [entity.fetch('id'), entity.fetch('spent_hours')] })
+        .to eq(issues.first.id => 2.0, issues.last.id => 1.0)
+      expect(aggregate_sql.length).to eq(1)
+    ensure
+      ActiveSupport::Notifications.unsubscribe(subscriber)
+    end
   end
 
   it 'fails instead of silently truncating grouped results when the budget is exceeded' do

@@ -305,14 +305,47 @@ test('contains multiline rows and controls under Redmine 6 button styles', async
     await page.setViewportSize({ width, height: 600 });
     await expectActionLayout(dialog, width);
   }
-  // Simulate theme defaults separately from Redmine's standard button rule.
-  await page.addStyleTag({ content: 'button { box-sizing: content-box; white-space: nowrap; }' });
+  expect(await dialog.locator('.action-needed-pagination button').first().evaluate(node => node.getBoundingClientRect().height)).toBe(26);
+  // Simulate a Redmine theme that changes control geometry and typography.
+  await page.addStyleTag({ content: `
+    body .action-needed-dialog { font-family: Georgia, serif; font-size: 18px; }
+    body .action-needed-dialog .action-needed-search input {
+      font-family: Georgia, serif; border: 2px solid #34495e; background: #eef3f8;
+    }
+    body .action-needed-dialog .action-needed-pagination button {
+      font-family: Georgia, serif; border: 2px solid #34495e; background: #eef3f8;
+      box-sizing: content-box; white-space: nowrap;
+    }
+  ` });
+  const themeStyles = await dialog.evaluate(element => {
+    const dialogStyle = getComputedStyle(element);
+    const searchStyle = getComputedStyle(element.querySelector('.action-needed-search input')!);
+    const buttonStyle = getComputedStyle(element.querySelector('.action-needed-pagination button')!);
+    return {
+      dialogFont: dialogStyle.fontFamily,
+      searchBorder: searchStyle.borderTopWidth,
+      searchBackground: searchStyle.backgroundColor,
+      buttonFont: buttonStyle.fontFamily,
+      buttonBorder: buttonStyle.borderTopWidth,
+      buttonBackground: buttonStyle.backgroundColor,
+      buttonBoxSizing: buttonStyle.boxSizing,
+    };
+  });
+  expect(themeStyles).toEqual({
+    dialogFont: 'Georgia, serif',
+    searchBorder: '2px',
+    searchBackground: 'rgb(238, 243, 248)',
+    buttonFont: 'Georgia, serif',
+    buttonBorder: '2px',
+    buttonBackground: 'rgb(238, 243, 248)',
+    buttonBoxSizing: 'content-box',
+  });
   for (const width of [800, 360]) {
     await page.setViewportSize({ width, height: 600 });
     await expectActionLayout(dialog, width);
   }
   expect(await dialog.locator('.action-needed-close-icon').evaluate(node => node.getBoundingClientRect().height)).toBe(32);
-  expect(await dialog.locator('.action-needed-pagination button').first().evaluate(node => node.getBoundingClientRect().height)).toBe(26);
+  expect(await dialog.locator('.action-needed-pagination button').first().evaluate(node => node.getBoundingClientRect().height)).toBe(30);
 });
 
 test('shows a compact planned overload entry and opens the workload pane', async ({ page }) => {
@@ -458,4 +491,75 @@ test('keeps reasons in the selected issue detail instead of the compact list row
   await expect(detail).toContainText('Overdue');
   await expect(detail).toContainText('No assignee');
   await expect(detail).toContainText('No estimated hours');
+});
+
+test('keeps the compact dialog controls usable at 320px height and a 200% equivalent viewport', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'zoom geometry is checked in Chromium');
+  await page.setViewportSize({ width: 800, height: 320 });
+  await waitForInitialRender(page);
+  await page.evaluate(async () => {
+    const { useTaskStore } = await import('/src/stores/TaskStore.ts');
+    const base = useTaskStore.getState().allTasks[0];
+    useTaskStore.getState().setTasks([{ ...base, id: '9001',
+      subject: 'Very long issue subject '.repeat(35), startDate: new Date(2020, 8, 1).getTime(),
+      dueDate: new Date(2020, 8, 22).getTime(), assignedToId: null, estimatedHours: undefined }]);
+    useTaskStore.setState({ dataReadStatus: 'ready', initialDataLoaded: true });
+  });
+  await page.addStyleTag({ content: 'button { box-sizing: content-box; white-space: nowrap; }' });
+  await page.getByTestId('action-needed-button').click();
+  const dialog = page.getByRole('dialog', { name: 'Action needed' });
+  const search = dialog.getByRole('searchbox');
+  await expect(search).toBeVisible();
+  await search.fill('Very long');
+  await expect(dialog.locator('.action-needed-detail-pane')).toContainText('3 reasons');
+  await expect(dialog.locator('.action-needed-overload')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible();
+
+  // A 640×640 physical window at 200% browser zoom has a 320×320 CSS viewport.
+  await page.setViewportSize({ width: 320, height: 320 });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible();
+  await expect(dialog.locator('.action-needed-overload')).toBeVisible();
+  await dialog.locator('.action-needed-row').first().click();
+  await expect(dialog.locator('.action-needed-detail-pane')).toBeVisible();
+  await expect(dialog.locator('.action-needed-detail-pane')).toContainText('3 reasons');
+  await dialog.locator('.action-needed-detail-pane').getByRole('button', { name: 'Back to list' }).click();
+  await expect(search).toBeFocused();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByTestId('action-needed-button').click();
+  await dialog.locator('.action-needed-overload').click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(async () => {
+    const { useWorkloadStore } = await import('/src/stores/WorkloadStore.ts');
+    return useWorkloadStore.getState().workloadPaneVisible;
+  })).toBe(true);
+});
+
+test('preserves mobile detail focus when refreshed data changes the selected issue', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 600 });
+  await waitForInitialRender(page);
+  await page.evaluate(async () => {
+    const { useTaskStore } = await import('/src/stores/TaskStore.ts');
+    const base = useTaskStore.getState().allTasks[0];
+    useTaskStore.getState().setTasks([{ ...base, id: '9001', subject: 'Initial issue',
+      startDate: undefined, dueDate: undefined, assignedToId: null }]);
+    useTaskStore.setState({ dataReadStatus: 'ready', initialDataLoaded: true });
+  });
+  await page.getByTestId('action-needed-button').click();
+  const dialog = page.getByRole('dialog', { name: 'Action needed' });
+  await dialog.locator('.action-needed-row').click();
+  const detail = dialog.locator('.action-needed-detail-pane');
+  const link = detail.getByRole('link', { name: 'Open this issue' });
+  await link.focus();
+  await page.evaluate(async () => {
+    const { useTaskStore } = await import('/src/stores/TaskStore.ts');
+    const base = useTaskStore.getState().allTasks[0];
+    useTaskStore.getState().setTasks([{ ...base, id: '9002', subject: 'Refreshed issue',
+      startDate: undefined, dueDate: undefined, assignedToId: null }]);
+  });
+  await expect(detail).toContainText('Refreshed issue');
+  await expect(link).toBeFocused();
+  await detail.getByRole('button', { name: 'Back to list' }).click();
+  await expect(dialog.getByRole('searchbox')).toBeFocused();
 });

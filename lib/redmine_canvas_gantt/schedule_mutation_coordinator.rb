@@ -118,7 +118,7 @@ module RedmineCanvasGantt
             token = resolution_token(scope_b, issues, calendar_resolver)
             if resolution[:preview].to_s == 'true'
               transaction_result = Result.new(status: :ok, operation_id: operation_id,
-                entities: issues.map { |issue| @payload_builder.build_task_state(issue) },
+                entities: @payload_builder.build_task_states(issues),
                 revisions: issues.to_h { |issue| [issue.id, issue.lock_version] },
                 invalidated_entity_ids: [], errors: [],
                 resolution_context: { token: token, task_ids: lock_ids, relations: resolution_relations(lock_ids).map { |r|
@@ -250,7 +250,7 @@ module RedmineCanvasGantt
             transaction_result = Result.new(
               status: :ok,
               operation_id: operation_id,
-              entities: canonical.map { |issue| @payload_builder.build_task_state(issue) },
+              entities: @payload_builder.build_task_states(canonical),
               revisions: canonical.to_h { |issue| [issue.id.to_i, issue.lock_version.to_i] },
               invalidated_entity_ids: changed_ids,
               errors: []
@@ -657,7 +657,7 @@ module RedmineCanvasGantt
       Result.new(
         status: :conflict,
         operation_id: operation_id,
-        entities: issues.map { |issue| @payload_builder.build_task_state(issue) },
+        entities: @payload_builder.build_task_states(issues),
         revisions: issues.to_h { |issue| [issue.id.to_i, issue.lock_version.to_i] },
         invalidated_entity_ids: issues.map(&:id),
         errors: ['The issue was updated by another request.'],

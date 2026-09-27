@@ -546,6 +546,7 @@ class CanvasGanttsController < ApplicationController
         permissions: @permissions,
         project_ids: project_ids,
         issues: resolved_query[:issues],
+        spent_hours_by_issue_id: resolved_query[:spent_hours_by_issue_id],
         relations: relations,
         filter_option_projects: bounded_data_collection(
           filter_option_projects(project_ids, member_projects_only: member_projects_only),
@@ -582,7 +583,9 @@ class CanvasGanttsController < ApplicationController
     raise ArgumentError, 'Invalid workload date range' if from > to || (to - from + 1) > MAX_ACTUAL_WORKLOAD_RANGE_DAYS
 
     resolved = query_state_resolver.resolve(project_ids: descendant_project_ids, scope_only: true)
-    scope = resolved[:issues].where(project_id: Project.allowed_to(User.current, :view_canvas_gantt).select(:id))
+    # Parent Canvas access is checked by ensure_view_permission. Child issues
+    # follow the same Issue.visible scope used by the data endpoint.
+    scope = resolved[:issues]
     scope = scope.joins(:status).where(issue_statuses: { is_closed: false }) unless params[:include_closed] == '1'
     scope = scope.where('issues.rgt = issues.lft + 1') if params[:leaf_only] == '1'
     entries = RedmineCanvasGantt::ActualWorkloadBuilder.build(
@@ -1071,11 +1074,11 @@ class CanvasGanttsController < ApplicationController
   def filter_option_projects(project_ids, member_projects_only: false)
     scope = if member_projects_only
               if User.current&.admin?
-                Project.visible.active
+                Project.visible.active.where(id: candidate_project_ids(project_ids))
               else
                 return [] if member_candidate_ids.empty?
 
-                Project.visible.active
+                Project.visible.active.where(id: candidate_project_ids(project_ids))
                   .joins(:members)
                   .where(members: { user_id: member_candidate_ids })
                   .distinct

@@ -575,25 +575,25 @@ RSpec.describe CanvasGanttsController, type: :controller do
       user = double('User', id: 7, group_ids: [11, 12], logged?: true, login: 'alice', admin?: false)
       allow(User).to receive(:current).and_return(user)
 
-      allow(member_joined_scope).to receive(:where).with(
+      allow(tree_member_joined_scope).to receive(:where).with(
         members: { user_id: [7, 11, 12] }
       ).and_return(member_filtered_scope)
       allow(member_filtered_scope).to receive(:distinct).and_return(member_filtered_scope)
-      allow(member_filtered_scope).to receive(:to_a).and_return([member_tree_project, member_project])
+      allow(member_filtered_scope).to receive(:to_a).and_return([member_tree_project])
 
       result = controller.send(:filter_option_projects, [1, 2], member_projects_only: true)
 
-      expect(result).to eq([member_tree_project, member_project])
+      expect(result).to eq([member_tree_project])
     end
 
     it 'returns all active visible projects when current user is admin even if memberProjectsOnly is enabled' do
       user = double('User', id: 7, logged?: true, login: 'admin', admin?: true)
       allow(User).to receive(:current).and_return(user)
-      allow(member_active_scope).to receive(:to_a).and_return([member_tree_project, descendant_project, member_project])
+      allow(tree_project_scope).to receive(:to_a).and_return([member_tree_project, descendant_project])
 
       result = controller.send(:filter_option_projects, [1, 2], member_projects_only: true)
 
-      expect(result).to eq([member_tree_project, descendant_project, member_project])
+      expect(result).to eq([member_tree_project, descendant_project])
     end
 
     it 'returns no projects when memberProjectsOnly is enabled and current user is unavailable' do
