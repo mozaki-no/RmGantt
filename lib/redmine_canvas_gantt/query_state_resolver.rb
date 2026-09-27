@@ -96,11 +96,13 @@ module RedmineCanvasGantt
       none_filters = overrides.filter_map { |field, value| field if value[:mode] == 'none' }
       none_filters.concat(empty_saved_query_filters(query_resolution.query, overrides))
 
-      issues = IssueSelector.new(
+      selector = IssueSelector.new(
         issue_scope: @issue_scope,
         issue_includes: @issue_includes,
+        current_user: @current_user,
         data_payload_budget: @data_payload_budget
-      ).call(
+      )
+      issues = selector.call(
         query_issue_scope: query_resolution.issue_scope,
         project_ids: selected_project_ids,
         redmine_project_ids: @redmine_project_ids,
@@ -111,6 +113,7 @@ module RedmineCanvasGantt
 
       {
         issues: issues,
+        spent_hours_by_issue_id: selector.spent_hours_by_issue_id,
         initial_state: state,
         query_context: query_context(query_resolution),
         warnings: @warnings

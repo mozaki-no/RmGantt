@@ -305,14 +305,47 @@ test('contains multiline rows and controls under Redmine 6 button styles', async
     await page.setViewportSize({ width, height: 600 });
     await expectActionLayout(dialog, width);
   }
-  // Simulate theme defaults separately from Redmine's standard button rule.
-  await page.addStyleTag({ content: 'button { box-sizing: content-box; white-space: nowrap; }' });
+  expect(await dialog.locator('.action-needed-pagination button').first().evaluate(node => node.getBoundingClientRect().height)).toBe(26);
+  // Simulate a Redmine theme that changes control geometry and typography.
+  await page.addStyleTag({ content: `
+    body .action-needed-dialog { font-family: Georgia, serif; font-size: 18px; }
+    body .action-needed-dialog .action-needed-search input {
+      font-family: Georgia, serif; border: 2px solid #34495e; background: #eef3f8;
+    }
+    body .action-needed-dialog .action-needed-pagination button {
+      font-family: Georgia, serif; border: 2px solid #34495e; background: #eef3f8;
+      box-sizing: content-box; white-space: nowrap;
+    }
+  ` });
+  const themeStyles = await dialog.evaluate(element => {
+    const dialogStyle = getComputedStyle(element);
+    const searchStyle = getComputedStyle(element.querySelector('.action-needed-search input')!);
+    const buttonStyle = getComputedStyle(element.querySelector('.action-needed-pagination button')!);
+    return {
+      dialogFont: dialogStyle.fontFamily,
+      searchBorder: searchStyle.borderTopWidth,
+      searchBackground: searchStyle.backgroundColor,
+      buttonFont: buttonStyle.fontFamily,
+      buttonBorder: buttonStyle.borderTopWidth,
+      buttonBackground: buttonStyle.backgroundColor,
+      buttonBoxSizing: buttonStyle.boxSizing,
+    };
+  });
+  expect(themeStyles).toEqual({
+    dialogFont: 'Georgia, serif',
+    searchBorder: '2px',
+    searchBackground: 'rgb(238, 243, 248)',
+    buttonFont: 'Georgia, serif',
+    buttonBorder: '2px',
+    buttonBackground: 'rgb(238, 243, 248)',
+    buttonBoxSizing: 'content-box',
+  });
   for (const width of [800, 360]) {
     await page.setViewportSize({ width, height: 600 });
     await expectActionLayout(dialog, width);
   }
   expect(await dialog.locator('.action-needed-close-icon').evaluate(node => node.getBoundingClientRect().height)).toBe(32);
-  expect(await dialog.locator('.action-needed-pagination button').first().evaluate(node => node.getBoundingClientRect().height)).toBe(26);
+  expect(await dialog.locator('.action-needed-pagination button').first().evaluate(node => node.getBoundingClientRect().height)).toBe(30);
 });
 
 test('shows a compact planned overload entry and opens the workload pane', async ({ page }) => {

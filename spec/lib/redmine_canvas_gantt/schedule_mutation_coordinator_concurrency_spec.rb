@@ -13,6 +13,10 @@ RSpec.describe RedmineCanvasGantt::ScheduleMutationCoordinator, 'callback topolo
            :trackers, :issue_statuses, :workflows, :enumerations, :issues
 
   class ConcurrencyPayloadBuilder
+    def build_task_states(issues)
+      issues.map { |issue| build_task_state(issue) }
+    end
+
     def build_task_state(issue)
       {
         id: issue.id,

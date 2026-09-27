@@ -5,7 +5,8 @@ require_relative '../../../lib/redmine_canvas_gantt/data_payload_budget'
 RSpec.describe RedmineCanvasGantt::IssueSelector do
   let(:issue_scope) { double('VisibleIssueScope') }
   let(:issue_includes) { [:status] }
-  let(:selector) { described_class.new(issue_scope: issue_scope, issue_includes: issue_includes) }
+  let(:current_user) { instance_double(User) }
+  let(:selector) { described_class.new(issue_scope: issue_scope, issue_includes: issue_includes, current_user: current_user) }
   let(:state) do
     {
       selected_status_ids: [],
@@ -74,6 +75,7 @@ RSpec.describe RedmineCanvasGantt::IssueSelector do
     bounded_selector = described_class.new(
       issue_scope: issue_scope,
       issue_includes: issue_includes,
+      current_user: current_user,
       data_payload_budget: budget
     )
     expect(issue_scope).not_to receive(:to_a)
@@ -136,10 +138,12 @@ RSpec.describe RedmineCanvasGantt::IssueSelector do
     low = double('Low hours', id: 2)
     high = double('High hours', id: 1)
     allow(issue_scope).to receive(:to_a).and_return([low, high])
-    expect(RedmineCanvasGantt::SpentHoursBatch).to receive(:for).with([low, high]).and_return(1 => 5.0, 2 => 1.0)
+    expect(RedmineCanvasGantt::SpentHoursBatch).to receive(:for)
+      .with([low, high], current_user: current_user).and_return(1 => 5.0, 2 => 1.0)
 
     expect(select_issues(state: state.merge(sort_config: { key: 'spentHours', direction: 'desc' })))
       .to eq([high, low])
+    expect(selector.spent_hours_by_issue_id).to eq(1 => 5.0, 2 => 1.0)
   end
 
   it 'keeps unset timestamps last when sorting creation time' do

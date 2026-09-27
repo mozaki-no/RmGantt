@@ -2,9 +2,12 @@ require_relative 'spent_hours_batch'
 
 module RedmineCanvasGantt
   class IssueSelector
-    def initialize(issue_scope:, issue_includes:, data_payload_budget: nil)
+    attr_reader :spent_hours_by_issue_id
+
+    def initialize(issue_scope:, issue_includes:, current_user:, data_payload_budget: nil)
       @issue_scope = issue_scope
       @issue_includes = issue_includes
+      @current_user = current_user
       @data_payload_budget = data_payload_budget
     end
 
@@ -67,7 +70,9 @@ module RedmineCanvasGantt
     def sort_issues!(issues, sort_config)
       return if sort_config.blank?
 
-      spent_hours = sort_config[:key] == 'spentHours' ? SpentHoursBatch.for(issues) : nil
+      spent_hours = if sort_config[:key] == 'spentHours'
+                      @spent_hours_by_issue_id = SpentHoursBatch.for(issues, current_user: @current_user)
+                    end
       values = issues.to_h { |issue| [issue.id, spent_hours ? spent_hours.fetch(issue.id, 0.0) : issue_sort_value(issue, sort_config[:key])] }
       issues.sort! do |left, right|
         left_value = values[left.id]
@@ -100,7 +105,6 @@ module RedmineCanvasGantt
       when 'categoryName' then issue.category&.name&.downcase
       when 'createdOn' then issue.created_on
       when 'updatedOn' then issue.updated_on
-      when 'spentHours' then issue.spent_hours
       else issue.id
       end
     end

@@ -17,6 +17,9 @@ RSpec.describe RedmineCanvasGantt::ScheduleMutationCoordinator, type: :model do
           lock_version: issue.lock_version
         }
       end
+      allow(builder).to receive(:build_task_states) do |issues|
+        issues.map { |issue| builder.build_task_state(issue) }
+      end
     end
   end
   let(:coordinator) do
