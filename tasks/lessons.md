@@ -112,6 +112,10 @@
 - Check only `project_id_changed?` and `tracker_id_changed?` for that fast
   path, not `changed?`: those two decide whether Redmine applies defaults, and a
   full `changed?` walks every attribute and cost more than the lookup itself.
+- Before comparing data-request timings across environments, record CPU model
+  and `RubyVM::YJIT.enabled?`. The official Redmine images run without YJIT,
+  which alone doubled the payload build time, and a 2012 laptop CPU made the
+  same 10,000-issue request about six times slower than the dev container.
 
 ## Multi-tab timer E2E
 

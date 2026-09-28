@@ -233,6 +233,19 @@ specific. Anything in front that sees `Content-Encoding` already set will pass
 the body through. Set `REDMINE_CANVAS_GANTT_DISABLE_GZIP=1` to turn this off,
 for example if a proxy is configured to re-encode responses.
 
+**Ruby YJIT.** Building the payload is plain Ruby work, so it scales with CPU
+speed. The official Redmine images start Ruby without YJIT. Enabling it measured
+2.2 s -> 1.1 s for a 10,000-issue data request on Redmine 7.0 / Ruby 4.0. On
+Redmine 6.0 or later, add this line to `config/additional_environment.rb` and
+restart Redmine:
+
+```ruby
+config.yjit = true
+```
+
+Setting `RUBY_YJIT_ENABLE=1` in the Redmine process environment has the same
+effect. YJIT uses some extra memory, typically tens of megabytes per process.
+
 **If the chart is still slow to open**, measure the server first: the data
 endpoint should issue a small, constant number of queries regardless of issue
 count. A per-issue query count means something in the payload is no longer
