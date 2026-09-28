@@ -50,13 +50,15 @@ module RedmineCanvasGantt
           can_edit_issues_by_project_id[issue.project_id] = @current_user.allowed_to?(:edit_issues, issue.project)
         end
 
-        build_task_state(issue).merge(
-          display_order: idx,
-          editable: can_edit_project && issue.editable?,
-          can_log_time: can_log_time_by_project_id.fetch(issue.project_id) do
-            can_log_time_by_project_id[issue.project_id] = @current_user.allowed_to?(:log_time, issue.project)
-          end
-        )
+        # Adding the collection keys to the fresh entity hash keeps the key
+        # order a merge would give without copying 30 keys per issue.
+        task = build_task_state(issue)
+        task[:display_order] = idx
+        task[:editable] = can_edit_project && issue.editable?
+        task[:can_log_time] = can_log_time_by_project_id.fetch(issue.project_id) do
+          can_log_time_by_project_id[issue.project_id] = @current_user.allowed_to?(:log_time, issue.project)
+        end
+        task
       end
     end
 
@@ -75,7 +77,7 @@ module RedmineCanvasGantt
           status_id: issue.status_id,
           status_name: issue.status.name,
           assigned_to_id: issue.assigned_to_id,
-          assigned_to_name: issue.assigned_to&.name,
+          assigned_to_name: principal_name(issue.assigned_to_id) { issue.assigned_to },
           parent_id: issue.parent_id,
           lock_version: issue.lock_version,
           tracker_id: issue.tracker_id,
@@ -85,7 +87,7 @@ module RedmineCanvasGantt
           priority_name: issue.priority&.name,
           priority_position: issue.priority&.position,
           author_id: issue.author_id,
-          author_name: issue.author&.name,
+          author_name: principal_name(issue.author_id) { issue.author },
           category_id: issue.category_id,
           category_name: issue.category&.name,
           estimated_hours: issue.estimated_hours,
@@ -95,6 +97,16 @@ module RedmineCanvasGantt
           fixed_version_name: issue.fixed_version&.name,
           custom_field_values: @custom_field_extractor.build_task_custom_field_values(issue)
       }
+    end
+
+    # Principal#name formats the configured user display format on every call.
+    # The same few users are assignee or author of thousands of issues, so the
+    # formatted name is memoized per principal for this builder.
+    def principal_name(principal_id)
+      return yield&.name if principal_id.nil?
+
+      @principal_names ||= {}
+      @principal_names.fetch(principal_id) { @principal_names[principal_id] = yield&.name }
     end
 
     def build_relations(issues)

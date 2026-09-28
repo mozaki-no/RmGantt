@@ -99,6 +99,12 @@
 - Do not mount one DOM element per task, even hidden ones. 10,000 `<li>` in the
   a11y list cost about 1 s of commit plus 0.4 s of first layout; window the list
   to the visible rows with overscan and keep the selected task in it.
+- Rails' Preloader costs about 40 ms per belongs_to association at 10,000
+  owners, even for a five-row lookup table. Loading each lookup table once by
+  the distinct foreign keys and assigning `association(name).target` is several
+  times cheaper and leaves the same loaded associations
+  (`LookupAssociationPreloader`). Memoize `Principal#name` per id while
+  serializing, because it re-formats the display name on every call.
 
 ## Custom field serialization
 

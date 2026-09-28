@@ -104,7 +104,8 @@ module RedmineCanvasGantt
 
     def build_task_custom_field_values_from_stored(issue)
       stored_values = {}
-      issue.custom_values.each do |custom_value|
+      # The loaded target array, not the CollectionProxy #custom_values builds.
+      issue.association(:custom_values).target.each do |custom_value|
         # Redmine reads the first stored value of a single-value field.
         stored_values[custom_value.custom_field_id] = custom_value.value unless stored_values.key?(custom_value.custom_field_id)
       end
