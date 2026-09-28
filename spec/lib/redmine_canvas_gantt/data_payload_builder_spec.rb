@@ -1,11 +1,6 @@
 require_relative '../../spec_helper'
 
 RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
-  it 'requires set explicitly for to_set usage' do
-    source = File.read(File.expand_path('../../../lib/redmine_canvas_gantt/data_payload_builder.rb', __dir__))
-    expect(source).to include("require 'set'")
-  end
-
   describe '#build' do
     it 'builds stable filter options for descendant projects and assignees' do
       custom_field_extractor = instance_double(
@@ -133,14 +128,13 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
           tracker_id: 1, tracker: nil, fixed_version_id: nil, fixed_version: nil,
           priority_id: 1, priority: nil, author_id: 1, author: nil,
           category_id: nil, category: nil, estimated_hours: nil,
-          created_on: nil, updated_on: nil, spent_hours: 0.0, editable?: true
+          created_on: nil, updated_on: nil, lft: 1, rgt: 2, editable?: true
         )
       end
 
       allow(extractor).to receive(:build_task_custom_field_values).and_return({})
-      # Serialization must stay query-free; the preload happens where the
-      # collection is loaded, not here.
-      expect(RedmineCanvasGantt::SpentHoursPreloader).not_to receive(:call)
+      # Spent time is summed once for the whole collection, never per issue.
+      expect(RedmineCanvasGantt::SpentHoursBatch).to receive(:for).once.and_return({})
       expect(current_user).to receive(:allowed_to?).with(:edit_issues, project).once.and_return(true)
       expect(current_user).to receive(:allowed_to?).with(:log_time, project).once.and_return(true)
 
@@ -164,10 +158,11 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         tracker_id: 1, tracker: nil, fixed_version_id: nil, fixed_version: nil,
         priority_id: 1, priority: nil, author_id: 1, author: nil,
         category_id: nil, category: nil, estimated_hours: nil,
-        created_on: nil, updated_on: nil, spent_hours: 0.0
+        created_on: nil, updated_on: nil, lft: 1, rgt: 2
       )
 
       allow(extractor).to receive(:build_task_custom_field_values).and_return({})
+      allow(RedmineCanvasGantt::SpentHoursBatch).to receive(:for).and_return({})
       allow(current_user).to receive(:allowed_to?).with(:edit_issues, project).and_return(false)
       allow(current_user).to receive(:allowed_to?).with(:log_time, project).and_return(false)
       expect(issue).not_to receive(:editable?)
@@ -300,12 +295,25 @@ RSpec.describe RedmineCanvasGantt::DataPayloadBuilder do
         editable?: true
       )
 
+      allow(RedmineCanvasGantt::SpentHoursBatch).to receive(:for)
+        .with(anything, current_user: current_user).and_return(101 => 2.5)
+
       tasks_100 = builder.build_tasks(Array.new(100, issue1))
       tasks_500 = builder.build_tasks(Array.new(500, issue1))
 
       expect(tasks_100.first[:can_log_time]).to eq(true)
+      expect(tasks_100.first[:spent_hours]).to eq(2.5)
       expect(tasks_500.last[:can_log_time]).to eq(true)
       expect(current_user).to have_received(:allowed_to?).with(:log_time, project1).twice
+      expect(tasks_100.first[:has_physical_children]).to eq(false)
+
+      # The payload contains only the parent; its physical child is filtered out.
+      allow(issue1).to receive(:rgt).and_return(4)
+      expect(issue1).not_to receive(:children)
+      expect(builder.build_tasks([issue1]).first[:has_physical_children]).to eq(true)
+      expect(builder.build_task_state(issue1)).to include(has_physical_children: true)
+      expect(builder.build_task_state(issue1)).not_to have_key(:display_order)
+      expect(builder.build_task_state(issue1)).not_to have_key(:has_children)
     end
   end
   describe '#build_versions' do

@@ -1,3 +1,4 @@
+import type { ActualWorkloadEntry } from '../services/WorkloadLogicService';
 import type {
     FilterAssigneeOption,
     FilterOptions,
@@ -18,6 +19,7 @@ import { normalizeQueryContext } from '../query/queryStateCodec';
 import { normalizeBaselineSaveScope, parseBaselineDateValue } from '../utils/baseline';
 import type { QueryContext } from '../query/types';
 import type { BusinessCalendarPayload } from '../types/businessCalendar';
+import type { DatePlacementMode } from '../types/constraints';
 import { getBusinessCalendarPayload, normalizeBusinessCalendarPayload } from '../utils/businessCalendar';
 import { formatDateOnly, parseDateOnly } from '../utils/dateOnly';
 import { sessionFetch } from './sessionFetch';
@@ -94,7 +96,21 @@ export type ScheduleMutationChange = {
     dueDate?: number | null;
     task?: unknown;
     mutationFields?: Record<string, unknown>;
+    /** Task mutation context; serialized on this change, not on the request. */
+    datePlacementMode?: DatePlacementMode;
 };
+
+export type ScheduleMutationConflict = {
+    taskId?: string;
+    expectedRevision?: number;
+    actualRevision?: number;
+};
+
+export type ScheduleAdjustment = { taskId: string; beforeStartDate?: number | null; beforeDueDate?: number | null;
+    startDate?: number | null; dueDate?: number | null };
+export type ScheduleResolutionRequest = { taskIds: string[]; token?: string; preview?: boolean;
+    acceptedAdjustments?: ScheduleAdjustment[] };
+export type ScheduleResolutionContext = { token: string; taskIds: string[]; relations: Relation[] };
 
 export type ScheduleMutationResult = MutationMetadata & {
     status: MutationStatus;
@@ -102,11 +118,10 @@ export type ScheduleMutationResult = MutationMetadata & {
     entities: PersistedTaskState[];
     revisions: Record<string, number>;
     errors?: string[];
-    conflict?: {
-        taskId?: string;
-        expectedRevision?: number;
-        actualRevision?: number;
-    };
+    conflict?: ScheduleMutationConflict;
+    conflicts?: ScheduleMutationConflict[];
+    resolutionContext?: ScheduleResolutionContext;
+    adjustments?: ScheduleAdjustment[];
 };
 
 interface BaselineSaveResult extends MutationMetadata {
@@ -299,6 +314,7 @@ const parseMutationEntity = (value: unknown): PersistedTaskState | undefined => 
         ...(record.assigned_to_id === null || typeof record.assigned_to_id === 'number' ? { assignedToId: record.assigned_to_id } : {}),
         ...(record.assigned_to_name === null || typeof record.assigned_to_name === 'string' ? { assignedToName: record.assigned_to_name } : {}),
         ...(has('parent_id') ? { parentId: parseNullableId('parent_id') } : {}),
+        ...(typeof record.has_physical_children === 'boolean' ? { hasPhysicalChildren: record.has_physical_children } : {}),
         ...(typeof record.lock_version === 'number' ? { lockVersion: record.lock_version } : {}),
         ...(has('tracker_id') ? { trackerId: parseNullableNumber('tracker_id') } : {}),
         ...(typeof record.tracker_name === 'string' ? { trackerName: record.tracker_name } : {}),
@@ -345,6 +361,19 @@ const parseMutationTaskResult = async (response: Response): Promise<UpdateTaskRe
     };
 };
 
+const parseScheduleMutationConflict = (value: unknown): ScheduleMutationConflict | undefined => {
+    const raw = asRecord(value);
+    if (!raw) return undefined;
+    const taskId = raw.task_id ?? raw.taskId;
+    const expectedRevision = raw.expectedRevision ?? raw.expected_revision;
+    const actualRevision = raw.actualRevision ?? raw.actual_revision;
+    return {
+        ...(typeof taskId === 'string' || typeof taskId === 'number' ? { taskId: String(taskId) } : {}),
+        ...(typeof expectedRevision === 'number' ? { expectedRevision } : {}),
+        ...(typeof actualRevision === 'number' ? { actualRevision } : {})
+    };
+};
+
 const parseScheduleMutationResult = async (response: Response): Promise<ScheduleMutationResult> => {
     const data = asRecord(await response.json().catch(() => ({}))) ?? {};
     const rawEntities = Array.isArray(data.entities) ? data.entities : [];
@@ -361,21 +390,40 @@ const parseScheduleMutationResult = async (response: Response): Promise<Schedule
             ? rawStatus as MutationStatus
             : response.ok ? 'ok' : mutationStatusForHttp(response.status);
     const errors = Array.isArray(data.errors) ? data.errors.filter((error): error is string => typeof error === 'string') : undefined;
-    const rawConflict = asRecord(data.conflict);
-    const conflictTaskId = rawConflict?.task_id ?? rawConflict?.taskId;
+    const conflict = parseScheduleMutationConflict(data.conflict);
+    const conflicts = Array.isArray(data.conflicts)
+        ? data.conflicts.map(parseScheduleMutationConflict).filter((entry): entry is ScheduleMutationConflict => Boolean(entry))
+        : undefined;
+    const context = asRecord(data.resolution_context);
+    const adjustments = Array.isArray(data.adjustments) ? data.adjustments.map((value): ScheduleAdjustment | null => {
+        const entry = asRecord(value);
+        if (!entry || (typeof entry.task_id !== 'number' && typeof entry.task_id !== 'string')) return null;
+        const parseDate = (field: string): number | null | undefined => entry[field] === null ? null
+            : typeof entry[field] === 'string' ? parseDateOnly(entry[field] as string) : undefined;
+        const startDate = parseDate('start_date');
+        const dueDate = parseDate('due_date');
+        if (startDate === undefined || dueDate === undefined) return null;
+        return { taskId: String(entry.task_id), beforeStartDate: parseDate('before_start_date'),
+            beforeDueDate: parseDate('before_due_date'), startDate, dueDate };
+    }).filter((entry): entry is ScheduleAdjustment => entry !== null) : undefined;
     return {
         status,
         operationId: typeof data.operation_id === 'string' ? data.operation_id : '',
         entities,
         revisions,
         ...(errors && errors.length > 0 ? { errors } : {}),
-        ...(rawConflict ? {
-            conflict: {
-                ...(conflictTaskId !== undefined ? { taskId: String(conflictTaskId) } : {}),
-                ...(typeof rawConflict.expected_revision === 'number' ? { expectedRevision: rawConflict.expected_revision } : {}),
-                ...(typeof rawConflict.expectedRevision === 'number' ? { expectedRevision: rawConflict.expectedRevision } : {}),
-                ...(typeof rawConflict.actual_revision === 'number' ? { actualRevision: rawConflict.actual_revision } : {}),
-                ...(typeof rawConflict.actualRevision === 'number' ? { actualRevision: rawConflict.actualRevision } : {})
+        ...(conflict ? { conflict } : {}),
+        ...(conflicts ? { conflicts } : {}),
+        ...(adjustments?.length ? { adjustments } : {}),
+        ...(context && typeof context.token === 'string' && Array.isArray(context.task_ids) && Array.isArray(context.relations) ? {
+            resolutionContext: {
+                token: context.token,
+                taskIds: context.task_ids.map(String),
+                relations: context.relations.map(value => {
+                    const relation = asRecord(value) ?? {};
+                    return { id: String(relation.id), from: String(relation.from), to: String(relation.to),
+                        type: String(relation.type) as Relation['type'], delay: Number(relation.delay ?? 0) };
+                })
             }
         } : {}),
         ...parseMutationMetadata(data)
@@ -693,6 +741,32 @@ const parseBaselineSnapshot = (value: unknown): { snapshot: BaselineSnapshot | n
 };
 
 export const apiClient = {
+    fetchActualWorkload: async (params: { query: ResolvedQueryState; queryContext: QueryContext;
+        from: string; to: string; leafOnly: boolean; includeClosed: boolean }): Promise<ActualWorkloadEntry[]> => {
+        const config = getConfig();
+        const query = buildIssueQueryParams(params.query, { queryContext: params.queryContext });
+        query.set('from', params.from);
+        query.set('to', params.to);
+        query.set('leaf_only', params.leafOnly ? '1' : '0');
+        query.set('include_closed', params.includeClosed ? '1' : '0');
+        const response = await sessionFetch(new URL(`${config.apiBase}/actual_workload.json?${query}`, window.location.origin).toString(), {
+            headers: buildJsonHeaders(config)
+        });
+        if (!response.ok) throw new Error(await parseErrorMessage(response));
+        const payload = asRecord(await response.json());
+        if (!Array.isArray(payload?.entries)) throw new Error('Invalid actual workload response');
+        return payload.entries.map((raw: unknown) => {
+            const entry = asRecord(raw);
+            if (!entry || typeof entry.id !== 'string' || typeof entry.issueId !== 'string' ||
+                typeof entry.userId !== 'number' || !Number.isInteger(entry.userId) ||
+                typeof entry.userName !== 'string' || typeof entry.spentOn !== 'string' ||
+                parseDateOnly(entry.spentOn) === null || typeof entry.hours !== 'number' || !Number.isFinite(entry.hours)) {
+                throw new Error('Invalid actual workload entry');
+            }
+            return { id: entry.id, issueId: entry.issueId, userId: entry.userId,
+                userName: entry.userName, spentOn: entry.spentOn, hours: entry.hours };
+        });
+    },
     fetchQueries: async (): Promise<SavedQuery[]> => {
         const config = getConfig();
         const response = await sessionFetch(new URL(`${config.apiBase}/queries.json`, window.location.origin).toString(), {
@@ -778,16 +852,9 @@ export const apiClient = {
                 fixedVersionName: typeof t.fixed_version_name === 'string' ? t.fixed_version_name : undefined,
                 customFieldValues,
                 rowIndex: index, // Simplify for now: default order
-                hasChildren: false // Will be updated below
+                hasPhysicalChildren: t.has_physical_children === true,
+                hasChildren: false
             };
-        });
-
-        // Compute hasChildren efficiently
-        const parentIds = new Set(tasks.filter(t => t.parentId).map(t => t.parentId));
-        tasks.forEach(t => {
-            if (parentIds.has(t.id)) {
-                t.hasChildren = true;
-            }
         });
 
         const relationsRaw = Array.isArray(data.relations) ? data.relations : [];
@@ -1109,14 +1176,20 @@ export const apiClient = {
         return parseMutationTaskResult(response);
     },
 
-    updateTaskFields: async (taskId: string, fields: Record<string, unknown>, operationId?: string): Promise<UpdateTaskResult> => {
+    updateTaskFields: async (taskId: string, fields: Record<string, unknown>, operationId?: string, datePlacementMode?: DatePlacementMode): Promise<UpdateTaskResult> => {
         const config = getConfig();
         const query = buildViewContextQuery(config);
 
         const response = await sessionFetch(`${getGlobalApiBase(config)}/tasks/${taskId}.json?${query}`, {
             method: 'PATCH',
             headers: buildJsonHeaders(config, true),
-            body: JSON.stringify({ task: fields, ...(operationId ? { client_operation_id: operationId } : {}) })
+            body: JSON.stringify({
+                task: {
+                    ...fields,
+                    ...(datePlacementMode ? { date_placement_mode: datePlacementMode } : {})
+                },
+                ...(operationId ? { client_operation_id: operationId } : {})
+            })
         });
 
         if (response.status === 409) {
@@ -1131,7 +1204,7 @@ export const apiClient = {
         return parseMutationTaskResult(response);
     },
 
-    scheduleMutation: async (changes: ScheduleMutationChange[], operationId: string): Promise<ScheduleMutationResult> => {
+    scheduleMutation: async (changes: ScheduleMutationChange[], operationId: string, resolution?: ScheduleResolutionRequest): Promise<ScheduleMutationResult> => {
         const config = getConfig();
         const query = buildViewContextQuery(config);
         const response = await sessionFetch(`${getGlobalApiBase(config)}/schedule_mutation.json?${query}`, {
@@ -1139,9 +1212,15 @@ export const apiClient = {
             headers: buildJsonHeaders(config, true),
             body: JSON.stringify({
                 operation_id: operationId,
+                ...(resolution ? { resolution: { task_ids: resolution.taskIds, token: resolution.token, preview: resolution.preview,
+                    ...(resolution.acceptedAdjustments ? { accepted_adjustments: resolution.acceptedAdjustments.map(adjustment => ({
+                        task_id: adjustment.taskId, start_date: formatDateOnly(adjustment.startDate ?? null),
+                        due_date: formatDateOnly(adjustment.dueDate ?? null)
+                    })) } : {}) } } : {}),
                 base_revisions: Object.fromEntries(changes.map(change => [change.taskId, change.baseRevision])),
-                changes: changes.map(({ taskId, startDate, dueDate }) => ({
+                changes: changes.map(({ taskId, startDate, dueDate, datePlacementMode }) => ({
                     task_id: taskId,
+                    ...(datePlacementMode ? { date_placement_mode: datePlacementMode } : {}),
                     ...(startDate !== undefined ? { start_date: formatDateOnly(startDate) } : {}),
                     ...(dueDate !== undefined ? { due_date: formatDateOnly(dueDate) } : {})
                 }))

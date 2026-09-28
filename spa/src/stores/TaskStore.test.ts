@@ -3,11 +3,14 @@ import { useTaskStore, derivedRecalculationCounters, resetDerivedRecalculationCo
 import type { Task } from '../types';
 import { ZOOM_SCALES } from '../utils/grid';
 import { apiClient } from '../api/client';
+import { taskMutationService } from '../services/taskMutationService';
 import { useUIStore } from './UIStore';
-import { AutoScheduleMoveMode } from '../types/constraints';
+import { AutoScheduleMoveMode, DatePlacementMode } from '../types/constraints';
 import { loadLastUsedSharedQueryState } from '../utils/sharedQueryState';
 import { configureBusinessCalendar } from '../utils/businessCalendar';
+import { WorkloadLogicService } from '../services/WorkloadLogicService';
 import { createReadContext } from './taskStore/stateContract';
+import { parseDateOnly } from '../utils/dateOnly';
 
 vi.mock('../api/client', () => ({
     apiClient: {
@@ -63,6 +66,16 @@ const deferred = <T,>() => {
 describe('TaskStore viewport clamping', () => {
     beforeEach(() => {
         useTaskStore.setState(useTaskStore.getInitialState(), true);
+    });
+
+    it('preserves physical parenthood through layout when children are filtered out', () => {
+        const parent = buildTask({ id: 'parent', hasPhysicalChildren: true });
+        useTaskStore.getState().applyApiData(buildApiData([parent]));
+
+        expect(useTaskStore.getState().allTasks.find(task => task.id === parent.id)?.hasPhysicalChildren).toBe(true);
+        expect(useTaskStore.getState().tasks.find(task => task.id === parent.id)).toMatchObject({
+            hasChildren: false, hasPhysicalChildren: true
+        });
     });
 
     it('updateViewport は scrollY を rowCount に合わせてクランプする', () => {
@@ -267,6 +280,228 @@ describe('TaskStore canonical mutation reconciliation', () => {
                 lockVersion: 3
             });
         } finally {
+            delete (apiClient as unknown as { scheduleMutation?: unknown }).scheduleMutation;
+        }
+    });
+
+    it('keeps the date placement mode captured by a manual edit after the preference changes', async () => {
+        const original = buildTask({ id: 'captured-mode', dueDate: MONDAY, lockVersion: 1 });
+        const scheduleMutation = vi.fn().mockResolvedValue({
+            status: 'ok',
+            entities: [{ id: original.id, dueDate: FRIDAY, lockVersion: 2 }],
+            revisions: { [original.id]: 2 }
+        });
+        Object.defineProperty(apiClient, 'scheduleMutation', {
+            value: scheduleMutation,
+            configurable: true,
+            writable: true
+        });
+
+        try {
+            useTaskStore.getState().setTasks([original]);
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays });
+            useTaskStore.getState().updateTask(original.id, { dueDate: FRIDAY });
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+
+            expect(useTaskStore.getState().localTaskPatches[original.id]?.[0]).toEqual(
+                expect.objectContaining({
+                    mutationContext: { datePlacementMode: DatePlacementMode.CalendarDays }
+                })
+            );
+
+            await useTaskStore.getState().saveChanges();
+
+            expect(scheduleMutation).toHaveBeenCalledWith(
+                [expect.objectContaining({ taskId: original.id, datePlacementMode: DatePlacementMode.CalendarDays })],
+                expect.any(String)
+            );
+        } finally {
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+            delete (apiClient as unknown as { scheduleMutation?: unknown }).scheduleMutation;
+        }
+    });
+
+    it('keeps working_days as the captured mode when the preference changes to calendar_days', async () => {
+        const original = buildTask({ id: 'captured-working-mode', dueDate: MONDAY, lockVersion: 1 });
+        const scheduleMutation = vi.fn().mockResolvedValue({
+            status: 'ok',
+            entities: [{ id: original.id, dueDate: TUESDAY, lockVersion: 2 }],
+            revisions: { [original.id]: 2 }
+        });
+        Object.defineProperty(apiClient, 'scheduleMutation', {
+            value: scheduleMutation,
+            configurable: true,
+            writable: true
+        });
+
+        try {
+            useTaskStore.getState().setTasks([original]);
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+            useTaskStore.getState().updateTask(original.id, { dueDate: TUESDAY });
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays });
+
+            await useTaskStore.getState().saveChanges();
+
+            expect(scheduleMutation).toHaveBeenCalledWith(
+                [expect.objectContaining({ taskId: original.id, datePlacementMode: DatePlacementMode.WorkingDays })],
+                expect.any(String)
+            );
+            expect(scheduleMutation.mock.calls[0][2]).toBeUndefined();
+        } finally {
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+            delete (apiClient as unknown as { scheduleMutation?: unknown }).scheduleMutation;
+        }
+    });
+
+    it.each([
+        { derived: false, retry: false, priorManual: false },
+        { derived: false, retry: true, priorManual: false },
+        { derived: true, retry: false, priorManual: false },
+        { derived: true, retry: true, priorManual: true }
+    ].flatMap(scenario => [false, true].map(autoSave => ({ ...scenario, autoSave }))))('saves mixed task modes in one batch (dependency-derived=$derived, retry=$retry, prior-manual=$priorManual, auto-save=$autoSave)', async ({ derived, retry, priorManual, autoSave }) => {
+        const friday = parseDateOnly('2027-01-01')!;
+        const saturday = parseDateOnly('2027-01-02')!;
+        const monday = parseDateOnly('2027-01-04')!;
+        const originals = [
+            buildTask({ id: 'A', startDate: friday, dueDate: friday, lockVersion: 1 }),
+            buildTask({ id: 'B', startDate: friday, dueDate: friday, lockVersion: 3 })
+        ];
+        const previousUI = useUIStore.getState();
+        const scheduleMutation = vi.fn().mockImplementation(async () => ({
+            status: 'ok',
+            entities: useTaskStore.getState().allTasks.map(task => ({ ...task, lockVersion: task.lockVersion + 1 })),
+            revisions: { A: 2, B: 4 }
+        }));
+        if (retry) {
+            scheduleMutation.mockImplementationOnce(async () => {
+                useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+                throw new Error('response lost');
+            });
+        }
+        Object.defineProperty(apiClient, 'scheduleMutation', { value: scheduleMutation, configurable: true });
+        vi.mocked(apiClient.fetchData).mockImplementation(async () => buildApiData(useTaskStore.getState().allTasks));
+        if (retry) vi.mocked(apiClient.fetchData).mockResolvedValueOnce(buildApiData(originals));
+        configureBusinessCalendar({
+            defaultCalendarId: 'weekdays',
+            calendars: { weekdays: { id: 'weekdays', name: 'Weekdays', nonWorkingWeekDays: [0, 6], days: {} } }
+        });
+
+        try {
+            useTaskStore.setState({ autoSave });
+            useTaskStore.getState().setTasks(originals);
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays, autoScheduleMoveMode: AutoScheduleMoveMode.ConstraintPush });
+            if (priorManual) useTaskStore.getState().updateTask('B', { startDate: saturday, dueDate: saturday });
+            if (derived) useTaskStore.getState().setRelations([{ id: 'AB', from: 'A', to: 'B', type: 'precedes', delay: 0 }]);
+            useTaskStore.getState().updateTask('A', { startDate: saturday, dueDate: saturday });
+            if (!derived) {
+                useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+                useTaskStore.getState().updateTask('B', { startDate: monday, dueDate: monday });
+            }
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays });
+
+            expect(await useTaskStore.getState().saveChanges()).toEqual(new Map());
+
+            expect(scheduleMutation).toHaveBeenCalledTimes(retry ? 2 : 1);
+            for (const call of scheduleMutation.mock.calls) {
+                expect(call).toEqual([
+                    [
+                        expect.objectContaining({ taskId: 'A', startDate: saturday, dueDate: saturday, datePlacementMode: DatePlacementMode.CalendarDays }),
+                        expect.objectContaining({ taskId: 'B', startDate: monday, dueDate: monday, datePlacementMode: DatePlacementMode.WorkingDays })
+                    ],
+                    expect.any(String)
+                ]);
+            }
+        } finally {
+            useUIStore.setState(previousUI);
+            configureBusinessCalendar(null);
+            delete (apiClient as unknown as { scheduleMutation?: unknown }).scheduleMutation;
+        }
+    });
+
+    it.each([false, true])('keeps the latest date mode on local conflict retry (dependency-derived=%s)', async (derived) => {
+        const friday = parseDateOnly('2027-01-01')!;
+        const saturday = parseDateOnly('2027-01-02')!;
+        const tasks = ['A', 'B'].map(id => buildTask({ id, startDate: friday, dueDate: friday, lockVersion: 1 }));
+        const previousUI = useUIStore.getState();
+        vi.mocked(apiClient.updateTaskFields).mockReset().mockResolvedValue({ status: 'ok', lockVersion: 3 });
+        configureBusinessCalendar({
+            defaultCalendarId: 'weekdays',
+            calendars: { weekdays: { id: 'weekdays', name: 'Weekdays', nonWorkingWeekDays: [0, 6], days: {} } }
+        });
+
+        const schedule = vi.spyOn(taskMutationService, 'scheduleMutation').mockImplementation(async (_changes, resolution) => {
+            const entities = tasks.map(task => ({ ...task, lockVersion: 2 }));
+            return { status: 'ok', operationId: 'review', entities, revisions: { A: 2, B: 2 },
+                ...(resolution?.preview ? { resolutionContext: { token: 'test', taskIds: ['A', 'B'], relations: useTaskStore.getState().relations } } : {}) };
+        });
+        try {
+            useTaskStore.getState().setTasks(tasks);
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays, autoScheduleMoveMode: AutoScheduleMoveMode.ConstraintPush });
+            useTaskStore.getState().updateTask('B', { startDate: saturday, dueDate: saturday });
+            if (derived) {
+                useTaskStore.getState().setRelations([{ id: 'AB', from: 'A', to: 'B', type: 'precedes', delay: 0 }]);
+                useTaskStore.getState().updateTask('A', { startDate: saturday, dueDate: saturday });
+            }
+            useTaskStore.getState().registerTaskConflict('B', 'Conflict', undefined, { ...tasks[1], lockVersion: 2 }, 2);
+            useUIStore.setState({ datePlacementMode: derived ? DatePlacementMode.CalendarDays : DatePlacementMode.WorkingDays });
+
+            await useTaskStore.getState().resolveTaskConflict('B', 'local');
+
+            expect(apiClient.updateTaskFields).not.toHaveBeenCalled();
+            await useTaskStore.getState().applyScheduleConflict('B');
+            expect(schedule).toHaveBeenCalledTimes(2);
+            expect(schedule.mock.calls[1][0]).toEqual([expect.objectContaining({
+                taskId: 'B', startDate: derived ? parseDateOnly('2027-01-04') : saturday,
+                dueDate: derived ? parseDateOnly('2027-01-04') : saturday,
+                baseRevision: 2, datePlacementMode: derived ? DatePlacementMode.WorkingDays : DatePlacementMode.CalendarDays
+            })]);
+            expect(useTaskStore.getState().taskConflicts.B).toBeUndefined();
+        } finally {
+            schedule.mockRestore();
+            useUIStore.setState(previousUI);
+            configureBusinessCalendar(null);
+        }
+    });
+
+    it('uses the latest date edit mode for the whole merged task interval, including an earlier start edit', async () => {
+        const friday = parseDateOnly('2027-01-01')!;
+        const saturday = parseDateOnly('2027-01-02')!;
+        const monday = parseDateOnly('2027-01-04')!;
+        const tuesday = parseDateOnly('2027-01-05')!;
+        const original = buildTask({ id: 'merged-mode', startDate: friday, dueDate: monday, lockVersion: 1 });
+        const scheduleMutation = vi.fn().mockResolvedValue({ status: 'ok', entities: [], revisions: {} });
+        Object.defineProperty(apiClient, 'scheduleMutation', { value: scheduleMutation, configurable: true });
+        const previousUI = useUIStore.getState();
+        configureBusinessCalendar({
+            defaultCalendarId: 'weekdays',
+            calendars: { weekdays: { id: 'weekdays', name: 'Weekdays', nonWorkingWeekDays: [0, 6], days: {} } }
+        });
+
+        try {
+            useTaskStore.getState().setTasks([original]);
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays });
+            useTaskStore.getState().updateTask(original.id, { startDate: saturday });
+            const firstPatch = useTaskStore.getState().localTaskPatches[original.id][0];
+            expect(firstPatch.mutationIntent).toEqual({ startDate: saturday });
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.WorkingDays });
+            useTaskStore.getState().updateTask(original.id, { dueDate: tuesday });
+            expect(useTaskStore.getState().localTaskPatches[original.id][0]).toEqual(firstPatch);
+            expect(firstPatch.mutationContext?.datePlacementMode).toBe(DatePlacementMode.CalendarDays);
+            // A later date edit normalizes the whole interval; preference alone does not.
+            useUIStore.setState({ datePlacementMode: DatePlacementMode.CalendarDays });
+            useTaskStore.getState().updateTask(original.id, { subject: 'later non-date edit' });
+
+            await useTaskStore.getState().saveChanges();
+
+            expect(scheduleMutation).toHaveBeenCalledExactlyOnceWith([
+                expect.objectContaining({
+                    taskId: original.id, startDate: monday, dueDate: tuesday,
+                    datePlacementMode: DatePlacementMode.WorkingDays
+                })
+            ], expect.any(String));
+        } finally {
+            useUIStore.setState(previousUI);
+            configureBusinessCalendar(null);
             delete (apiClient as unknown as { scheduleMutation?: unknown }).scheduleMutation;
         }
     });
@@ -1221,7 +1456,7 @@ describe('TaskStore API data application', () => {
     expect(uiState.columnsExplicitInQuery).toBe(false);
   });
 
-  it('refreshData applies API data with one TaskStore state update', async () => {
+  it('refreshData reports loading and applies API data with one final state update', async () => {
         vi.mocked(apiClient.fetchData).mockResolvedValue({
             tasks: [buildTask({ id: 't1', projectId: 'p1', projectName: 'Project 1' })],
             relations: [],
@@ -1247,8 +1482,75 @@ describe('TaskStore API data application', () => {
         await useTaskStore.getState().refreshData();
         unsubscribe();
 
-        expect(notifications).toBe(1);
+        expect(notifications).toBe(2);
         expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['t1']);
+    });
+
+    it('does not present a failed refresh as ready data', async () => {
+        let rejectRequest!: (error: Error) => void;
+        vi.mocked(apiClient.fetchData).mockImplementation(() => new Promise<Awaited<ReturnType<typeof apiClient.fetchData>>>((_, reject) => { rejectRequest = reject; }));
+        useTaskStore.setState({ allTasks: [buildTask({ id: 'old' })], initialDataLoaded: true, dataReadStatus: 'ready' });
+        const request = useTaskStore.getState().refreshData();
+        expect(useTaskStore.getState().dataReadStatus).toBe('loading');
+        rejectRequest(new Error('offline'));
+        await expect(request).rejects.toThrow('offline');
+        expect(useTaskStore.getState().dataReadStatus).toBe('error');
+        expect(useTaskStore.getState().allTasks.map(task => task.id)).toEqual(['old']);
+    });
+
+    it('settles a superseded refresh after a local edit without losing the draft', async () => {
+        const original = buildTask({ id: '1', subject: 'Server' });
+        vi.mocked(apiClient.fetchData).mockResolvedValueOnce(buildApiData([original]));
+        await useTaskStore.getState().refreshData();
+
+        const delayed = deferred<Awaited<ReturnType<typeof apiClient.fetchData>>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(delayed.promise);
+        const refresh = useTaskStore.getState().refreshData();
+        expect(useTaskStore.getState().dataReadStatus).toBe('loading');
+
+        useTaskStore.getState().updateTask('1', { subject: 'Draft' });
+        delayed.resolve(buildApiData([{ ...original, subject: 'Stale response' }]));
+        await expect(refresh).resolves.toEqual(expect.objectContaining({ status: 'superseded' }));
+
+        const state = useTaskStore.getState();
+        expect(state.dataReadStatus).toBe('ready');
+        expect(state.allTasks.find(task => task.id === '1')?.subject).toBe('Draft');
+        expect(state.localTaskPatches['1']?.at(-1)?.mutationIntent).toMatchObject({ subject: 'Draft' });
+        expect(apiClient.fetchData).toHaveBeenCalledTimes(2);
+    });
+
+    it('settles the read status after a successful mutation resync', async () => {
+        const original = buildTask({ id: '1', subject: 'Server' });
+        vi.mocked(apiClient.fetchData).mockResolvedValueOnce(buildApiData([original]));
+        await useTaskStore.getState().refreshData();
+        useTaskStore.getState().registerTaskConflict('1', 'Conflict');
+
+        const delayed = deferred<Awaited<ReturnType<typeof apiClient.fetchData>>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(delayed.promise);
+        const resolution = useTaskStore.getState().resolveTaskConflict('1', 'remote');
+        expect(useTaskStore.getState().dataReadStatus).toBe('loading');
+        delayed.resolve(buildApiData([{ ...original, subject: 'Remote', lockVersion: 2 }]));
+        await resolution;
+
+        expect(useTaskStore.getState().dataReadStatus).toBe('ready');
+        expect(useTaskStore.getState().allTasks.find(task => task.id === '1')?.subject).toBe('Remote');
+    });
+
+    it('settles the read status after a failed mutation resync', async () => {
+        const original = buildTask({ id: '1', subject: 'Server' });
+        vi.mocked(apiClient.fetchData).mockResolvedValueOnce(buildApiData([original]));
+        await useTaskStore.getState().refreshData();
+        useTaskStore.getState().registerTaskConflict('1', 'Conflict');
+
+        const delayed = deferred<Awaited<ReturnType<typeof apiClient.fetchData>>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(delayed.promise);
+        const resolution = useTaskStore.getState().resolveTaskConflict('1', 'remote');
+        expect(useTaskStore.getState().dataReadStatus).toBe('loading');
+        delayed.reject(new Error('offline'));
+        await resolution;
+
+        expect(useTaskStore.getState().dataReadStatus).toBe('error');
+        expect(useTaskStore.getState().taskConflicts['1']).toBeDefined();
     });
 
     it('applyApiData filters selectedProjectIds without mutating initialState', () => {
@@ -1849,6 +2151,22 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(useTaskStore.getState().allTasks.map(task => task.id)).toEqual(['new']);
     });
 
+    it('keeps the newer refresh loading when an older response is discarded', async () => {
+        const first = deferred<ReturnType<typeof buildApiData>>();
+        const second = deferred<ReturnType<typeof buildApiData>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+        const firstRefresh = useTaskStore.getState().refreshData();
+        const secondRefresh = useTaskStore.getState().refreshData();
+        first.resolve(buildApiData([buildTask({ id: 'old' })]));
+        await expect(firstRefresh).resolves.toEqual(expect.objectContaining({ status: 'superseded' }));
+        expect(useTaskStore.getState().dataReadStatus).toBe('loading');
+
+        second.resolve(buildApiData([buildTask({ id: 'new' })]));
+        await expect(secondRefresh).resolves.toEqual(expect.objectContaining({ status: 'applied' }));
+        expect(useTaskStore.getState().dataReadStatus).toBe('ready');
+    });
+
     it('does not surface a superseded request rejection after a newer refresh wins', async () => {
         const first = deferred<ReturnType<typeof buildApiData>>();
         const second = deferred<ReturnType<typeof buildApiData>>();
@@ -2093,12 +2411,98 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.taskTombstones['task-1']).toBeUndefined();
     });
 
-    it('cleans the settled bar operation when conflict resolution adopts the remote task', async () => {
-        const localTask = buildTask({ id: 'task-1', dueDate: TUESDAY });
-        const remoteTask = buildTask({ id: 'task-1', dueDate: FRIDAY, lockVersion: 2 });
+    it('fetches a newer remote value when a snapshot from another scope supersedes the conflict response', async () => {
+        const local = buildTask({ id: 'task-1', subject: 'local', lockVersion: 1 });
+        const response = buildTask({ id: 'task-1', subject: 'remote v2', lockVersion: 2 });
+        const snapshot = buildTask({ id: 'task-1', subject: 'remote v3', lockVersion: 3 });
+        const refreshed = buildTask({ id: 'task-1', subject: 'remote v4', lockVersion: 4 });
+        const otherScope = createReadContext({ generation: 1, projectId: 'p1', query: { queryId: 1 }, scope: {}, purpose: 'refresh' });
+        const activeScope = createReadContext({ generation: 2, projectId: 'p1', query: { queryId: 2 }, scope: {}, purpose: 'refresh' });
+        useTaskStore.getState().applyApiData(buildApiData([local]));
+        useTaskStore.setState({
+            serverTaskSnapshot: { entitiesById: { 'task-1': snapshot }, revisions: { 'task-1': 3 }, context: otherScope },
+            activeReadContext: activeScope,
+            dataReadStatus: 'ready'
+        });
+        useTaskStore.getState().registerTaskConflict('task-1', 'Conflict', undefined, response, 2);
+        vi.mocked(apiClient.fetchData).mockResolvedValue(buildApiData([refreshed]));
+
+        await useTaskStore.getState().resolveTaskConflict('task-1', 'remote');
+
+        const state = useTaskStore.getState();
+        expect(apiClient.fetchData).toHaveBeenCalled();
+        expect(state.allTasks.find(task => task.id === 'task-1')?.subject).toBe('remote v4');
+        expect(state.serverTaskSnapshot.entitiesById['task-1'].subject).toBe('remote v4');
+        expect(state.serverTaskSnapshot.revisions['task-1']).toBe(4);
+        expect(state.taskConflicts['task-1']).toBeUndefined();
+    });
+
+    it('does not copy an unrelated local draft into a partial remote response', async () => {
+        const server = buildTask({ id: 'task-1', subject: 'server subject', dueDate: TUESDAY, lockVersion: 1 });
+        useTaskStore.getState().applyApiData(buildApiData([server]));
+        useTaskStore.getState().updateTask('task-1', { subject: 'local draft' });
+        const generation = useTaskStore.getState().editGenerations['task-1'];
+        useTaskStore.getState().registerTaskConflict('task-1', 'Conflict', generation,
+            { id: 'task-1', dueDate: FRIDAY, lockVersion: 2 }, 2);
+
+        await useTaskStore.getState().resolveTaskConflict('task-1', 'remote');
+
+        const state = useTaskStore.getState();
+        expect(state.allTasks.find(task => task.id === 'task-1')).toMatchObject({
+            subject: 'server subject', dueDate: FRIDAY, lockVersion: 2
+        });
+        expect(state.serverTaskSnapshot.entitiesById['task-1']).toMatchObject({
+            subject: 'server subject', dueDate: FRIDAY, lockVersion: 2
+        });
+        expect(state.modifiedTaskIds.has('task-1')).toBe(false);
+    });
+
+    it('does not replace a newer conflict when an earlier remote refresh fails', async () => {
+        const local = buildTask({ id: 'task-1', subject: 'local', lockVersion: 1 });
+        const newerRemote = buildTask({ id: 'task-1', subject: 'newer remote', lockVersion: 3 });
+        useTaskStore.getState().applyApiData(buildApiData([local]));
+        useTaskStore.getState().registerTaskConflict('task-1', 'First conflict');
+        const request = deferred<ReturnType<typeof buildApiData>>();
+        vi.mocked(apiClient.fetchData).mockReturnValue(request.promise);
+
+        const resolution = useTaskStore.getState().resolveTaskConflict('task-1', 'remote');
+        useTaskStore.getState().registerTaskConflict('task-1', 'Newer conflict', undefined, newerRemote, 3);
+        request.reject(new Error('Old refresh failed'));
+        await resolution;
+
+        const conflict = useTaskStore.getState().taskConflicts['task-1'];
+        expect(conflict.message).toBe('Newer conflict');
+        expect(conflict.remoteEntity?.subject).toBe('newer remote');
+        expect(conflict.remoteAvailability).toBe('known');
+    });
+
+    it('does not apply a remote refresh from a view that changed while it was pending', async () => {
+        const local = buildTask({ id: 'task-1', subject: 'local', lockVersion: 1 });
+        const oldViewRemote = buildTask({ id: 'task-1', subject: 'old view remote', lockVersion: 2 });
+        const newViewRemote = buildTask({ id: 'task-1', subject: 'new view remote', lockVersion: 3 });
+        useTaskStore.getState().applyApiData(buildApiData([local]));
+        useTaskStore.getState().registerTaskConflict('task-1', 'Conflict');
+        const request = deferred<ReturnType<typeof buildApiData>>();
+        vi.mocked(apiClient.fetchData).mockImplementationOnce(() => request.promise)
+            .mockResolvedValue(buildApiData([newViewRemote]));
+
+        const resolution = useTaskStore.getState().resolveTaskConflict('task-1', 'remote');
+        useTaskStore.getState().setSelectedAssigneeIds([99]);
+        request.resolve(buildApiData([oldViewRemote]));
+        await resolution;
+        await vi.waitFor(() => expect(useTaskStore.getState().dataReadStatus).toBe('ready'));
+
+        const state = useTaskStore.getState();
+        expect(state.allTasks.find(task => task.id === 'task-1')?.subject).toBe('new view remote');
+        expect(state.taskConflicts['task-1']).toBeDefined();
+    });
+
+    it('cleans the settled bar operation when conflict resolution adopts the remote task (non-schedule fields)', async () => {
+        const localTask = buildTask({ id: 'task-1', ratioDone: 20 });
+        const remoteTask = buildTask({ id: 'task-1', ratioDone: 50, lockVersion: 2 });
         useTaskStore.getState().setTasks([localTask]);
         const operationId = useTaskStore.getState().beginBarOperation('task-1');
-        useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+        useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
         useTaskStore.getState().endBarOperation(operationId);
         useTaskStore.setState({
             serverTaskSnapshot: {
@@ -2120,16 +2524,16 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.barOperations).toEqual({});
     });
 
-    it('settles only the resolved entity in a linked bar operation', async () => {
+    it('settles only the resolved entity in a linked bar operation (non-schedule fields)', async () => {
         const localTasks = [
-            buildTask({ id: 'task-a', dueDate: TUESDAY }),
-            buildTask({ id: 'task-b', dueDate: WEDNESDAY })
+            buildTask({ id: 'task-a', ratioDone: 20 }),
+            buildTask({ id: 'task-b', ratioDone: 30 })
         ];
-        const remoteTaskA = buildTask({ id: 'task-a', dueDate: FRIDAY, lockVersion: 2 });
+        const remoteTaskA = buildTask({ id: 'task-a', ratioDone: 50, lockVersion: 2 });
         useTaskStore.getState().setTasks(localTasks);
         const operationId = useTaskStore.getState().beginBarOperation('task-a');
-        useTaskStore.getState().updateTask('task-a', { dueDate: THURSDAY });
-        useTaskStore.getState().updateTask('task-b', { dueDate: FRIDAY });
+        useTaskStore.getState().updateTask('task-a', { ratioDone: 40 });
+        useTaskStore.getState().updateTask('task-b', { ratioDone: 50 });
         useTaskStore.getState().endBarOperation(operationId);
         useTaskStore.setState({
             serverTaskSnapshot: {
@@ -2152,13 +2556,13 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.localTaskPatches['task-b']).toHaveLength(1);
     });
 
-    it('preserves later-generation patches when resolving an earlier remote conflict', async () => {
-        const localTask = buildTask({ id: 'task-1', dueDate: TUESDAY });
-        const remoteTask = buildTask({ id: 'task-1', dueDate: FRIDAY, lockVersion: 2 });
+    it('preserves later-generation patches when resolving an earlier remote conflict (non-schedule fields)', async () => {
+        const localTask = buildTask({ id: 'task-1', ratioDone: 20 });
+        const remoteTask = buildTask({ id: 'task-1', ratioDone: 50, lockVersion: 2 });
         useTaskStore.getState().setTasks([localTask]);
 
         const firstOperationId = useTaskStore.getState().beginBarOperation('task-1');
-        useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+        useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
         useTaskStore.getState().endBarOperation(firstOperationId);
         const conflictGeneration = useTaskStore.getState().editGenerations['task-1'];
 
@@ -2189,7 +2593,7 @@ describe('TaskStore asynchronous state ownership', () => {
 
         const state = useTaskStore.getState();
         expect(state.allTasks.find(task => task.id === 'task-1')).toMatchObject({
-            dueDate: FRIDAY,
+            ratioDone: 50,
             subject: 'later local edit'
         });
         expect(state.localTaskPatches['task-1']).toEqual([
@@ -2220,16 +2624,109 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.barOperations[operationId]).toBeDefined();
     });
 
-    it('cleans the bar operation after a successful local conflict retry', async () => {
+    it.each([false, true].flatMap(autoSave => [false, true].map(laterServerEdit => ({ autoSave, laterServerEdit }))))(
+        'pins the displayed v3 for local retry (autoSave=$autoSave, laterServerEdit=$laterServerEdit)',
+        async ({ autoSave, laterServerEdit }) => {
+            const original = buildTask({ id: 'task-1', subject: 'original', lockVersion: 1 });
+            const other = buildTask({ id: 'task-2', subject: 'other', lockVersion: 1 });
+            const remoteV2 = { ...original, subject: 'remote v2', lockVersion: 2 };
+            const remoteV3 = { ...original, subject: 'remote v3', lockVersion: 3 };
+            const remoteV4 = { ...original, subject: 'later server edit', lockVersion: 4 };
+            const context = createReadContext({ generation: 1, projectId: 'p1', query: {}, scope: {}, purpose: 'refresh' });
+            useTaskStore.getState().applyApiData(buildApiData([original, other]), context);
+            useTaskStore.setState({ autoSave });
+            useTaskStore.getState().updateTask(original.id, { subject: 'local intent' });
+            useTaskStore.getState().updateTask(other.id, { subject: 'unrelated draft' });
+            const otherPatches = useTaskStore.getState().localTaskPatches[other.id];
+            useTaskStore.getState().registerTaskConflict(original.id, 'Conflict',
+                useTaskStore.getState().editGenerations[original.id], remoteV2, 2);
+            useTaskStore.getState().applyApiData(buildApiData([remoteV3, other]), context);
+            vi.mocked(apiClient.updateTaskFields).mockImplementation(async (_id, fields) => {
+                expect(fields).toEqual({ subject: 'local intent', lock_version: 3 });
+                return laterServerEdit
+                    ? { status: 'conflict', entity: remoteV4, revision: 4 }
+                    : { status: 'ok', entity: { ...remoteV4, subject: 'local intent' }, revision: 4, lockVersion: 4 };
+            });
+
+            const retry = useTaskStore.getState().resolveTaskConflict(original.id, 'local');
+            // The queued payload must not pick up an update arriving after confirmation.
+            if (laterServerEdit) useTaskStore.getState().applyTaskMutationMetadata(original.id, { entity: remoteV4, revision: 4 });
+            await retry;
+
+            expect(apiClient.fetchData).not.toHaveBeenCalled();
+            expect(apiClient.updateTaskFields).toHaveBeenCalledTimes(1);
+            const state = useTaskStore.getState();
+            expect(state.localTaskPatches[other.id]).toEqual(otherPatches);
+            expect(state.allTasks.find(task => task.id === other.id)?.subject).toBe('unrelated draft');
+            expect(state.modifiedTaskIds.has(other.id)).toBe(true);
+            if (laterServerEdit) {
+                expect(state.taskConflicts[original.id]?.remoteRevision).toBe(4);
+                expect(state.modifiedTaskIds.has(original.id)).toBe(true);
+                expect(state.allTasks.find(task => task.id === original.id)?.subject).toBe('local intent');
+            } else {
+                expect(state.taskConflicts[original.id]).toBeUndefined();
+                expect(state.modifiedTaskIds.has(original.id)).toBe(false);
+            }
+        }
+    );
+
+    it.each(['edit', 'conflict', 'scope'] as const)('abandons local retry when %s changes during remote confirmation', async change => {
+        const original = buildTask({ id: 'task-1', subject: 'original', lockVersion: 1 });
+        const remote = { ...original, subject: 'remote', lockVersion: 2 };
+        useTaskStore.getState().applyApiData(buildApiData([original]));
+        useTaskStore.getState().updateTask(original.id, { subject: 'local intent' });
+        useTaskStore.getState().registerTaskConflict(original.id, 'Conflict');
+        const request = deferred<ReturnType<typeof buildApiData>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(request.promise).mockResolvedValue(buildApiData([remote]));
+
+        const retry = useTaskStore.getState().resolveTaskConflict(original.id, 'local');
+        if (change === 'edit') useTaskStore.getState().updateTask(original.id, { subject: 'later draft' });
+        if (change === 'conflict') useTaskStore.getState().registerTaskConflict(original.id, 'Newer conflict', undefined, remote, 2);
+        if (change === 'scope') useTaskStore.setState({ selectedAssigneeIds: [99] });
+        const conflict = useTaskStore.getState().taskConflicts[original.id];
+        request.resolve(buildApiData([remote]));
+        await retry;
+
+        expect(apiClient.updateTaskFields).not.toHaveBeenCalled();
+        expect(useTaskStore.getState().taskConflicts[original.id]).toBe(conflict);
+        expect(useTaskStore.getState().modifiedTaskIds.has(original.id)).toBe(true);
+        if (change === 'edit') expect(useTaskStore.getState().allTasks[0].subject).toBe('later draft');
+    });
+
+    it('keeps the confirmed revision fixed across transport retry after a newer server update', async () => {
+        const local = buildTask({ id: 'task-1', subject: 'original', lockVersion: 1 });
+        useTaskStore.getState().applyApiData(buildApiData([local]));
+        useTaskStore.getState().updateTask(local.id, { subject: 'local intent' });
+        useTaskStore.getState().registerTaskConflict(local.id, 'Conflict', undefined,
+            { ...local, subject: 'remote v2', lockVersion: 2 }, 2);
+        vi.mocked(apiClient.fetchData).mockResolvedValue(buildApiData([
+            { ...local, subject: 'remote v3', lockVersion: 3 }
+        ]));
+        await useTaskStore.getState().refreshData();
+        const remoteV4 = { ...local, subject: 'later server edit', lockVersion: 4 };
+        vi.mocked(apiClient.updateTaskFields).mockImplementationOnce(async () => {
+            useTaskStore.getState().applyTaskMutationMetadata(local.id, { entity: remoteV4, revision: 4 });
+            return { status: 'transient_error' };
+        }).mockResolvedValueOnce({ status: 'conflict', entity: remoteV4, revision: 4 });
+
+        await useTaskStore.getState().resolveTaskConflict(local.id, 'local');
+
+        expect(vi.mocked(apiClient.updateTaskFields).mock.calls.map(call => call[1].lock_version)).toEqual([3, 3]);
+        expect(useTaskStore.getState().taskConflicts[local.id].remoteRevision).toBe(4);
+        expect(useTaskStore.getState().modifiedTaskIds.has(local.id)).toBe(true);
+        expect(useTaskStore.getState().allTasks.find(task => task.id === local.id)?.subject).toBe('local intent');
+    });
+
+    it('cleans the bar operation after a successful local conflict retry (non-schedule fields)', async () => {
         vi.mocked(apiClient.updateTaskFields).mockResolvedValue({ status: 'ok', lockVersion: 2 });
-        const localTask = buildTask({ id: 'task-1', dueDate: TUESDAY, lockVersion: 1 });
-        useTaskStore.getState().setTasks([localTask]);
+        const localTask = buildTask({ id: 'task-1', ratioDone: 20, lockVersion: 1 });
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
         const operationId = useTaskStore.getState().beginBarOperation('task-1');
-        useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+        useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
         useTaskStore.getState().endBarOperation(operationId);
         useTaskStore.getState().registerTaskConflict('task-1', 'Conflict');
         vi.mocked(apiClient.fetchData).mockResolvedValue(buildApiData([
-            { ...localTask, dueDate: THURSDAY, lockVersion: 2 }
+            { ...localTask, ratioDone: 40, lockVersion: 2 }
         ]));
 
         await useTaskStore.getState().resolveTaskConflict('task-1', 'local');
@@ -2241,7 +2738,7 @@ describe('TaskStore asynchronous state ownership', () => {
     it('preserves the source task and local intent when Keep Local retry loses a reference', async () => {
         useUIStore.setState(useUIStore.getInitialState(), true);
         const localTask = buildTask({ id: 'task-1', parentId: undefined, lockVersion: 1 });
-        useTaskStore.getState().setTasks([localTask]);
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
         useTaskStore.getState().updateTask('task-1', { parentId: 'missing-parent' });
         const conflictGeneration = useTaskStore.getState().editGenerations['task-1'];
         useTaskStore.getState().registerTaskConflict(
@@ -2272,7 +2769,7 @@ describe('TaskStore asynchronous state ownership', () => {
     it('retries inline conflict resolution with the local field payload and current lock version', async () => {
         vi.mocked(apiClient.updateTaskFields).mockResolvedValue({ status: 'ok', lockVersion: 3 });
         const localTask = buildTask({ id: 'task-1', statusId: 1, statusName: 'New', lockVersion: 1 });
-        useTaskStore.getState().setTasks([localTask]);
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
         useTaskStore.getState().updateTask('task-1', { statusId: 2, statusName: 'In Progress' });
         useTaskStore.getState().registerTaskConflict('task-1', 'Conflict');
         vi.mocked(apiClient.fetchData).mockResolvedValue(buildApiData([
@@ -2304,7 +2801,7 @@ describe('TaskStore asynchronous state ownership', () => {
             statusId: 1,
             lockVersion: 1
         });
-        useTaskStore.getState().setTasks([localTask]);
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
         useTaskStore.getState().updateTask(
             localTask.id,
             { projectId: '2', trackerId: 7, statusId: 4 },
@@ -2327,7 +2824,7 @@ describe('TaskStore asynchronous state ownership', () => {
     it('retries the intended value when the conflict projection differs', async () => {
         vi.mocked(apiClient.updateTaskFields).mockResolvedValue({ status: 'ok', lockVersion: 3 });
         const localTask = buildTask({ id: 'task-1', subject: 'persisted', lockVersion: 1 });
-        useTaskStore.getState().setTasks([localTask]);
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
         useTaskStore.getState().updateTask(
             localTask.id,
             { subject: 'server projection' },
@@ -2347,13 +2844,13 @@ describe('TaskStore asynchronous state ownership', () => {
         );
     });
 
-    it('settles the conflicted operation without removing a later operation after local retry', async () => {
+    it('settles the conflicted operation without removing a later operation after local retry (non-schedule fields)', async () => {
         vi.mocked(apiClient.updateTaskFields).mockResolvedValue({ status: 'ok', lockVersion: 3 });
-        const localTask = buildTask({ id: 'task-1', dueDate: TUESDAY, lockVersion: 1 });
-        useTaskStore.getState().setTasks([localTask]);
+        const localTask = buildTask({ id: 'task-1', ratioDone: 20, lockVersion: 1 });
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
 
         const conflictedOperationId = useTaskStore.getState().beginBarOperation('task-1');
-        useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+        useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
         useTaskStore.getState().endBarOperation(conflictedOperationId);
         useTaskStore.getState().registerTaskConflict('task-1', 'Conflict');
 
@@ -2361,7 +2858,7 @@ describe('TaskStore asynchronous state ownership', () => {
         useTaskStore.getState().updateTask('task-1', { subject: 'later local edit' });
         useTaskStore.getState().endBarOperation(laterOperationId);
         vi.mocked(apiClient.fetchData).mockResolvedValue(buildApiData([
-            { ...localTask, dueDate: THURSDAY, subject: 'later local edit', lockVersion: 3 }
+            { ...localTask, ratioDone: 40, subject: 'later local edit', lockVersion: 3 }
         ]));
 
         await useTaskStore.getState().resolveTaskConflict('task-1', 'local');
@@ -2372,22 +2869,22 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.modifiedTaskIds.has('task-1')).toBe(false);
     });
 
-    it('settles every saved generation while preserving an edit created during local retry', async () => {
+    it('settles every saved generation while preserving an edit created during local retry (non-schedule fields)', async () => {
         const firstSaveRequest = deferred<{ status: 'ok'; lockVersion: number }>();
         vi.mocked(apiClient.updateTaskFields).mockReturnValueOnce(firstSaveRequest.promise);
-        const localTask = buildTask({ id: 'task-1', dueDate: TUESDAY, lockVersion: 1 });
-        useTaskStore.getState().setTasks([localTask]);
+        const localTask = buildTask({ id: 'task-1', ratioDone: 20, lockVersion: 1 });
+        useTaskStore.getState().applyApiData(buildApiData([localTask]));
 
         const operationIds = [1, 2, 3].map(() => {
             const operationId = useTaskStore.getState().beginBarOperation('task-1');
-            useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+            useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
             useTaskStore.getState().endBarOperation(operationId);
             return operationId;
         });
         const conflictGeneration = useTaskStore.getState().editGenerations['task-1'] - 2;
         useTaskStore.getState().registerTaskConflict('task-1', 'Conflict', conflictGeneration);
         vi.mocked(apiClient.fetchData).mockResolvedValue(buildApiData([
-            { ...localTask, dueDate: THURSDAY, lockVersion: 2 }
+            { ...localTask, ratioDone: 40, lockVersion: 2 }
         ]));
 
         const retry = useTaskStore.getState().resolveTaskConflict('task-1', 'local');
@@ -2422,12 +2919,12 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.taskConflicts['task-1']).toBeDefined();
     });
 
-    it('preserves task ownership when remote state is unavailable', async () => {
-        const localTask = buildTask({ id: 'task-1', dueDate: TUESDAY });
+    it('preserves task ownership when remote state is unavailable (non-schedule fields)', async () => {
+        const localTask = buildTask({ id: 'task-1', ratioDone: 20 });
         useTaskStore.getState().setTasks([localTask]);
 
         const firstOperationId = useTaskStore.getState().beginBarOperation('task-1');
-        useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+        useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
         useTaskStore.getState().endBarOperation(firstOperationId);
         useTaskStore.getState().registerTaskConflict('task-1', 'Task no longer exists');
 
@@ -2444,10 +2941,10 @@ describe('TaskStore asynchronous state ownership', () => {
         expect(state.barOperations).toHaveProperty(firstOperationId);
     });
 
-    it('keeps the active operation when remote state is unavailable', async () => {
-        useTaskStore.getState().setTasks([buildTask({ id: 'task-1', dueDate: TUESDAY })]);
+    it('keeps the active operation when remote state is unavailable (non-schedule fields)', async () => {
+        useTaskStore.getState().setTasks([buildTask({ id: 'task-1', ratioDone: 20 })]);
         const operationId = useTaskStore.getState().beginBarOperation('task-1');
-        useTaskStore.getState().updateTask('task-1', { dueDate: THURSDAY });
+        useTaskStore.getState().updateTask('task-1', { ratioDone: 40 });
         useTaskStore.getState().registerTaskConflict('task-1', 'Task no longer exists');
 
         expect(useTaskStore.getState().activeBarOperationId).toBe(operationId);
@@ -3192,6 +3689,105 @@ describe('TaskStore dependency grouping', () => {
 
         expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['a', 'b', 'c']);
         expect(useTaskStore.getState().layoutRows.filter(row => row.type === 'version')).toHaveLength(2);
+    });
+});
+
+describe('TaskStore start-only scheduling', () => {
+    beforeEach(() => {
+        useTaskStore.setState(useTaskStore.getInitialState(), true);
+        useUIStore.setState(useUIStore.getInitialState(), true);
+        vi.mocked(apiClient.updateTask).mockReset();
+        vi.mocked(apiClient.updateTask).mockResolvedValue({ status: 'ok', lockVersion: 1 });
+    });
+
+    const modes = [AutoScheduleMoveMode.Off, AutoScheduleMoveMode.ConstraintPush, AutoScheduleMoveMode.LinkedDownstreamShift];
+
+    describe.each([false, true])('autoSave=%s', (autoSave) => {
+        it.each(modes)('moves only the start date and saves no due date in %s mode', async (mode) => {
+            const { setTasks, setRelations, updateTask, saveChanges } = useTaskStore.getState();
+            useTaskStore.setState({ autoSave });
+            useUIStore.setState({ autoScheduleMoveMode: mode });
+            setTasks([
+                buildTask({ id: 'source', startDate: MONDAY, dueDate: MONDAY }),
+                buildTask({ id: 'point', startDate: TUESDAY, dueDate: undefined }),
+                buildTask({ id: 'successor', startDate: WEDNESDAY, dueDate: THURSDAY })
+            ]);
+            setRelations([
+                { id: 'incoming', from: 'source', to: 'point', type: 'precedes' },
+                { id: 'outgoing', from: 'point', to: 'successor', type: 'precedes' }
+            ]);
+
+            updateTask('point', { startDate: FRIDAY });
+
+            const state = useTaskStore.getState();
+            expect(state.allTasks.find(task => task.id === 'point')).toMatchObject({
+                startDate: FRIDAY, dueDate: undefined
+            });
+            expect(state.allTasks.find(task => task.id === 'successor')).toMatchObject({
+                startDate: WEDNESDAY, dueDate: THURSDAY
+            });
+            expect([...state.modifiedTaskIds]).toEqual(['point']);
+            expect(state.localTaskPatches.point).toEqual([
+                expect.objectContaining({ projection: { startDate: FRIDAY }, mutationIntent: { startDate: FRIDAY } })
+            ]);
+
+            // Both drag auto-save and the manual Save action use saveChanges.
+            expect(await saveChanges()).toEqual(new Map());
+
+            expect(apiClient.updateTask).toHaveBeenCalledTimes(1);
+            expect(apiClient.updateTask).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'point', startDate: FRIDAY, dueDate: undefined }),
+                expect.any(String),
+                { start_date: '2026-01-09' }
+            );
+            expect(useTaskStore.getState().allTasks.find(task => task.id === 'point')?.dueDate).toBeUndefined();
+        });
+
+        it.each(modes)('excludes a start-only successor from propagation in %s mode', (mode) => {
+            const { setTasks, setRelations, updateTask } = useTaskStore.getState();
+            useTaskStore.setState({ autoSave });
+            useUIStore.setState({ autoScheduleMoveMode: mode });
+            setTasks([
+                buildTask({ id: 'source', startDate: MONDAY, dueDate: MONDAY }),
+                buildTask({ id: 'point', startDate: TUESDAY, dueDate: undefined }),
+                buildTask({ id: 'successor', startDate: WEDNESDAY, dueDate: THURSDAY })
+            ]);
+            setRelations([
+                { id: 'incoming', from: 'point', to: 'source', type: 'follows' },
+                { id: 'outgoing', from: 'point', to: 'successor', type: 'precedes' }
+            ]);
+
+            updateTask('source', { startDate: THURSDAY, dueDate: THURSDAY });
+
+            const state = useTaskStore.getState();
+            expect(state.allTasks.find(task => task.id === 'point')).toMatchObject({
+                startDate: TUESDAY, dueDate: undefined
+            });
+            expect(state.allTasks.find(task => task.id === 'successor')).toMatchObject({
+                startDate: WEDNESDAY, dueDate: THURSDAY
+            });
+            expect([...state.modifiedTaskIds]).toEqual(['source']);
+            expect(state.localTaskPatches.point).toBeUndefined();
+        });
+    });
+
+    it('does not fill a start-only successor when adding or changing a dependency', () => {
+        const { setTasks, addRelation, replaceRelation } = useTaskStore.getState();
+        setTasks([
+            buildTask({ id: 'source', startDate: MONDAY, dueDate: THURSDAY }),
+            buildTask({ id: 'point', startDate: TUESDAY, dueDate: undefined })
+        ]);
+        const relation = { id: 'incoming', from: 'source', to: 'point', type: 'precedes' };
+
+        addRelation(relation);
+        replaceRelation({ ...relation, delay: 3 });
+
+        const state = useTaskStore.getState();
+        expect(state.allTasks.find(task => task.id === 'point')).toMatchObject({
+            startDate: TUESDAY, dueDate: undefined
+        });
+        expect(state.modifiedTaskIds.size).toBe(0);
+        expect(state.localTaskPatches).toEqual({});
     });
 });
 
@@ -4417,5 +5013,82 @@ describe('TaskStore drag parent updates', () => {
         expect(state.localTaskPatches.child).toEqual(expect.arrayContaining([
             expect.objectContaining({ generation: parentMoveGeneration })
         ]));
+    });
+});
+
+
+describe('physical hierarchy canonical reconciliation', () => {
+    beforeEach(() => {
+        useTaskStore.setState(useTaskStore.getInitialState(), true);
+        vi.mocked(apiClient.updateTaskFields).mockReset();
+        vi.mocked(apiClient.fetchData).mockReset();
+        useTaskStore.setState({ autoSave: true, currentProjectId: 'p1' });
+    });
+
+    it.each([
+        { name: 'leaf becomes parent', toRoot: false, before: false, after: true },
+        { name: 'only child leaves', toRoot: true, before: true, after: false },
+        { name: 'hidden sibling remains', toRoot: true, before: true, after: true }
+    ])('$name uses server hierarchy after invalidation refresh', async ({ toRoot, before, after }) => {
+        const parent = buildTask({ id: '11', projectId: 'p1', hasPhysicalChildren: before,
+            assignedToId: 1, estimatedHours: 8, startDate: MONDAY, dueDate: MONDAY });
+        const child = buildTask({ id: '10', projectId: 'p1', parentId: toRoot ? '11' : undefined });
+        useTaskStore.getState().applyApiData(buildApiData([parent, child]));
+        const read = deferred<ReturnType<typeof buildApiData>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(read.promise);
+        const canonicalChild = { ...child, parentId: toRoot ? undefined : '11', lockVersion: 1 };
+        vi.mocked(apiClient.updateTaskFields).mockResolvedValueOnce({
+            status: 'ok', lockVersion: 1, parentId: canonicalChild.parentId,
+            entity: canonicalChild, invalidatedEntityIds: ['10', '11'], completeness: 'partial'
+        });
+        const result = await (toRoot ? useTaskStore.getState().moveTaskToRoot('10')
+            : useTaskStore.getState().moveTaskAsChild('10', '11'));
+        expect(result.status).toBe('ok');
+        expect(useTaskStore.getState().allTasks.find(t => t.id === '11')?.hasPhysicalChildren).toBe(before);
+        expect(apiClient.fetchData).toHaveBeenCalledTimes(1);
+        read.resolve(buildApiData([{ ...parent, hasPhysicalChildren: after }, canonicalChild]));
+        await vi.waitFor(() => expect(useTaskStore.getState().serverTaskSnapshot.entitiesById['11']?.hasPhysicalChildren).toBe(after));
+        const state = useTaskStore.getState();
+        expect(state.tasks.find(t => t.id === '11')).toMatchObject({ hasChildren: !toRoot, hasPhysicalChildren: after });
+        const workload = WorkloadLogicService.calculateWorkload(state.allTasks, new Set(), {
+            leafIssuesOnly: true, capacityThreshold: 8, todayOnwardOnly: false, includeClosedIssues: true
+        });
+        expect(workload.assignees.has(1)).toBe(!after);
+    });
+
+    it('rejects late invalidation reads without rolling back newer hierarchy or local edits', async () => {
+        const parent = buildTask({ id: '11', projectId: 'p1', hasPhysicalChildren: false });
+        const child = buildTask({ id: '10', projectId: 'p1' });
+        useTaskStore.getState().applyApiData(buildApiData([parent, child]));
+        const oldRead = deferred<ReturnType<typeof buildApiData>>();
+        vi.mocked(apiClient.fetchData).mockReturnValueOnce(oldRead.promise)
+            .mockResolvedValueOnce(buildApiData([{ ...parent, hasPhysicalChildren: false }, { ...child, lockVersion: 2 }]));
+        vi.mocked(apiClient.updateTaskFields).mockResolvedValueOnce({
+            status: 'ok', lockVersion: 1, parentId: '11',
+            entity: { id: '10', parentId: '11', lockVersion: 1 }, invalidatedEntityIds: ['10', '11']
+        }).mockResolvedValueOnce({
+            status: 'ok', lockVersion: 2, entity: { id: '10', parentId: undefined, lockVersion: 2 },
+            invalidatedEntityIds: ['10', '11']
+        });
+        await useTaskStore.getState().moveTaskAsChild('10', '11');
+        await useTaskStore.getState().moveTaskToRoot('10');
+        await vi.waitFor(() => expect(useTaskStore.getState().serverTaskSnapshot.entitiesById['10'].lockVersion).toBe(2));
+        useTaskStore.getState().updateTask('10', { subject: 'later local edit' });
+        oldRead.resolve(buildApiData([{ ...parent, hasPhysicalChildren: true }, { ...child, parentId: '11', lockVersion: 1 }]));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const state = useTaskStore.getState();
+        expect(state.serverTaskSnapshot.entitiesById['11'].hasPhysicalChildren).toBe(false);
+        expect(state.allTasks.find(t => t.id === '10')?.parentId).toBeUndefined();
+        expect(state.allTasks.find(t => t.id === '10')?.subject).toBe('later local edit');
+    });
+
+    it.each(['mutation', 'read'])('rejects an older %s revision in both snapshot and view', (kind) => {
+        const current = buildTask({ id: '10', hasPhysicalChildren: true, parentId: 'new', lockVersion: 4 });
+        useTaskStore.getState().applyApiData(buildApiData([current]));
+        const old = { ...current, hasPhysicalChildren: false, parentId: 'old', lockVersion: 3 };
+        if (kind === 'mutation') useTaskStore.getState().applyTaskMutationMetadata('10', { entity: old, revision: 3 });
+        else useTaskStore.getState().applyApiData(buildApiData([old]));
+        expect(useTaskStore.getState().serverTaskSnapshot.entitiesById['10']).toMatchObject(current);
+        expect(useTaskStore.getState().allTasks[0]).toMatchObject(current);
     });
 });

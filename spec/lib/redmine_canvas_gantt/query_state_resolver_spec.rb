@@ -27,8 +27,6 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   # not about preloading. Opting in per example - rather than stubbing the real
   # preloader for the whole file - keeps a later example that ought to exercise
   # preloading from silently not doing so.
-  let(:null_spent_hours_preloader) { class_double(RedmineCanvasGantt::SpentHoursPreloader, call: nil) }
-
   let(:project) { instance_double(Project, id: 1) }
   let(:current_user) { instance_double(User, id: 5) }
   let(:issue_scope) { double('IssueScope') }
@@ -72,6 +70,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   end
 
   before do
+    allow(project).to receive_message_chain(:self_and_descendants, :pluck).with(:id).and_return([1, 2, 3])
     allow(IssueQuery).to receive(:find_by).with(id: '42').and_return(query)
     allow(query).to receive(:dup).and_return(working_query)
     allow(working_query).to receive(:filters=)
@@ -79,6 +78,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     allow(issue_scope).to receive(:where).and_return(issue_scope)
     allow(issue_scope).to receive(:preload).with(*issue_includes).and_return(issue_scope)
     allow(issue_scope).to receive(:to_a).and_return([])
+    allow(issue_scope).to receive(:except).and_return(issue_scope)
   end
 
   it 'extracts supported shared state and applies url overrides' do
@@ -90,7 +90,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       query_id: 42,
       selected_status_ids: [1, 2],
       selected_assignee_ids: [7],
-      selected_project_ids: ['9'],
+      selected_project_ids: [],
       member_projects_only: false,
       show_subprojects: false,
       sort_config: { key: 'subject', direction: 'desc' },
@@ -327,7 +327,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
 
     result = resolver.resolve(project_ids: [1, 2])
 
-    expect(result[:initial_state][:selected_project_ids]).to eq(%w[9 10 11 12])
+    expect(result[:initial_state][:selected_project_ids]).to eq([])
   end
 
   it 'treats Canvas project none as an explicit empty project selection without falling back to project scope' do
@@ -605,28 +605,6 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     )
   end
 
-  it 'uses the data budget before materializing the resolved issue scope' do
-    budget = instance_double(RedmineCanvasGantt::DataPayloadBudget, issue_limit: 10_000)
-    resolver = build_resolver(
-      params: ActionController::Parameters.new,
-      data_payload_budget: budget
-    )
-    allow(resolver).to receive(:issues_scope_for).and_return(issue_scope)
-    expect(budget).to receive(:load_records)
-      .with(issue_scope, resource: 'issues', limit: 10_000)
-      .and_return([])
-
-    issues = resolver.send(
-      :load_issues,
-      query_issue_scope: nil,
-      project_ids: [1],
-      selected_project_ids: [],
-      state: { sort_config: nil }
-    )
-
-    expect(issues).to eq([])
-  end
-
   it 'composes a saved query as a database subquery before the bounded final materialization' do
     query_scope = double('SavedQueryScopeWith20kCandidates')
     query_id_subquery = double('SavedQueryIdSubqueryWith20kCandidates')
@@ -646,8 +624,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
 
     result = build_resolver(
       params: ActionController::Parameters.new(query_id: '42', tracker_ids: ['3']),
-      data_payload_budget: budget,
-      spent_hours_preloader: null_spent_hours_preloader
+      data_payload_budget: budget
     ).resolve(project_ids: [1, 2])
 
     expect(result[:issues]).to eq(final_issues)
@@ -683,65 +660,87 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       expect(issue_scope).to receive(:preload).with(*issue_includes).and_return(issue_scope)
       expect(issue_scope).not_to receive(:includes)
 
-      build_resolver(spent_hours_preloader: null_spent_hours_preloader).resolve(project_ids: [1])
+      build_resolver.resolve(project_ids: [1])
     end
   end
 
-  describe 'spent time preloading' do
-    # The preloader is injected rather than stubbed on the constant, so these
-    # examples assert against the collaborator the resolver was handed.
-    let(:preloader) { class_double(RedmineCanvasGantt::SpentHoursPreloader, call: nil) }
-
-    def build_issue(id, spent_hours)
-      instance_double(Issue, id: id, start_date: nil, spent_hours: spent_hours)
+  %w[status_id assigned_to_id project_id fixed_version_id tracker_id].each do |field|
+    it "treats an explicit empty #{field} equality as no matches" do
+      params = ActionController::Parameters.new(set_filter: '1', f: [field], op: { field => '=' }, v: { field => [] })
+      expect(issue_scope).to receive(:where).with(id: []).and_return(issue_scope)
+      result = described_class.new(project: project, params: params, current_user: current_user,
+        issue_scope: issue_scope, issue_includes: issue_includes).resolve(project_ids: [1, 2], scope_only: true)
+      expect(result[:query_context][:explicit_overrides].values).to include(mode: 'none')
     end
+  end
 
-    def resolve_with(issues, extra_params = {})
-      allow(issue_scope).to receive(:where).and_return(issue_scope)
-      allow(issue_scope).to receive(:preload).with(*issue_includes).and_return(issue_scope)
-      allow(issue_scope).to receive(:to_a).and_return(issues)
-
-      build_resolver(
-        params: ActionController::Parameters.new(extra_params),
-        spent_hours_preloader: preloader
-      ).resolve(project_ids: [1])
-    end
-
-    it 'defaults to the real preloader when none is injected' do
-      expect(RedmineCanvasGantt::SpentHoursPreloader).to receive(:call).with([], current_user)
-
-      build_resolver.resolve(project_ids: [1])
-    end
-
-    it 'preloads the loaded collection once, where the records are loaded' do
-      issues = [build_issue(1, 0.0), build_issue(2, 0.0)]
-
-      expect(preloader).to receive(:call).with(issues, current_user).once
-
-      resolve_with(issues)
-    end
-
-    it 'preloads before sorting, so sorting by spent time is not a per-issue SUM' do
-      call_order = []
-      issues = [build_issue(1, 5.0), build_issue(2, 1.0)]
-
-      allow(preloader).to receive(:call) { call_order << :preload }
-      issues.each do |issue|
-        allow(issue).to receive(:spent_hours) do
-          call_order << :read
-          0.0
-        end
+  { 'status_id' => :status, 'assigned_to_id' => :assignee,
+    'fixed_version_id' => :version, 'tracker_id' => :tracker }.each do |field, name|
+    it "keeps invalid #{field} values from widening a URL filter" do
+      resolve = ->(values) do
+        described_class.new(project: project,
+          params: ActionController::Parameters.new(field => values),
+          current_user: current_user, issue_scope: issue_scope,
+          issue_includes: issue_includes).resolve(project_ids: [1, 2])
       end
-
-      resolve_with(issues, sort: 'spentHours:asc')
-
-      expect(call_order.first).to eq(:preload)
+      expect(resolve.call(['invalid'])[:query_context][:explicit_overrides][name]).to eq(mode: 'none')
+      expect(resolve.call(['3', 'invalid'])[:query_context][:explicit_overrides][name])
+        .to eq(mode: 'subset', values: name == :version ? ['3'] : [3])
     end
 
-    it 'delegates the empty case to the preloader rather than branching here' do
-      expect(preloader).to receive(:call).with([], current_user)
-
-      resolve_with([])
+    it "treats the standard #{field} all operator as unfiltered" do
+      params = ActionController::Parameters.new(set_filter: '1', f: [field], op: { field => '*' })
+      result = described_class.new(project: project, params: params, current_user: current_user,
+        issue_scope: issue_scope, issue_includes: issue_includes).resolve(project_ids: [1, 2])
+      expect(result[:query_context][:explicit_overrides][name]).to eq(mode: 'all')
     end
+  end
+
+  it 'distinguishes an omitted filter, none, invalid ids and mixed ids' do
+    resolver = ->(params) do
+      described_class.new(project: project, params: ActionController::Parameters.new(params),
+        current_user: current_user, issue_scope: issue_scope, issue_includes: issue_includes)
+        .resolve(project_ids: [1, 2])
+    end
+    expect(resolver.call({})[:query_context][:explicit_overrides]).to eq({})
+    expect(resolver.call(status_id: ['none'])[:query_context][:explicit_overrides][:status]).to eq(mode: 'none')
+    expect(resolver.call(status_id: ['invalid'])[:query_context][:explicit_overrides][:status]).to eq(mode: 'none')
+    expect(resolver.call(status_id: ['3', 'invalid'])[:query_context][:explicit_overrides][:status])
+      .to eq(mode: 'subset', values: [3])
+    expect(resolver.call(assigned_to_id: ['none'])[:query_context][:explicit_overrides][:assignee])
+      .to eq(mode: 'subset', values: [nil])
+    expect(resolver.call(fixed_version_id: ['none'])[:query_context][:explicit_overrides][:version])
+      .to eq(mode: 'subset', values: ['_none'])
+  end
+
+  it 'bounds explicit project ids even when valid and outside ids are mixed' do
+    result = described_class.new(project: project,
+      params: ActionController::Parameters.new(canvas_project_ids: %w[2 999 invalid]),
+      current_user: current_user, issue_scope: issue_scope,
+      issue_includes: issue_includes).resolve(project_ids: [1, 2])
+    expect(result[:initial_state][:selected_project_ids]).to eq(['2'])
+  end
+
+  it 'lets an explicit empty URL filter replace a saved query selection with no matches' do
+    expect(working_query).to receive(:filters=).with(hash_excluding('status_id'))
+    expect(issue_scope).to receive(:where).with(id: []).and_return(issue_scope)
+    result = described_class.new(project: project,
+      params: ActionController::Parameters.new(query_id: '42', status_id: []),
+      current_user: current_user, issue_scope: issue_scope,
+      issue_includes: issue_includes).resolve(project_ids: [1, 2])
+    expect(result[:query_context][:explicit_overrides][:status]).to eq(mode: 'none')
+  end
+
+  it 'preserves Redmine-managed saved-query values while a different URL filter is applied' do
+    filters = { 'assigned_to_id' => { operator: '=', values: ['me'] } }
+    allow(working_query).to receive(:filters).and_return(filters)
+    expect(issue_scope).not_to receive(:where).with(id: [])
+
+    result = described_class.new(project: project,
+      params: ActionController::Parameters.new(query_id: '42', tracker_ids: ['3']),
+      current_user: current_user, issue_scope: issue_scope,
+      issue_includes: issue_includes).resolve(project_ids: [1, 2])
+
+    expect(result[:initial_state][:selected_tracker_ids]).to eq([3])
   end
 end

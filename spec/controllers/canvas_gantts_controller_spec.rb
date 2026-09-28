@@ -68,7 +68,8 @@ RSpec.describe CanvasGanttsController, type: :controller do
           due_date: '2027-01-04',
           changed_fields: %i[start_date due_date],
           project: project,
-          mode: :legacy_unspecified
+          mode: :legacy_unspecified,
+          date_placement_mode: :working_days
         )
         .and_return(
           valid: true,
@@ -114,7 +115,8 @@ RSpec.describe CanvasGanttsController, type: :controller do
           due_date: '2027-01-04',
           changed_fields: %i[start_date due_date],
           project: project,
-          mode: :project_move
+          mode: :project_move,
+          date_placement_mode: :working_days
         ).and_return(valid: true, start_date: Date.new(2027, 1, 5), due_date: Date.new(2027, 1, 5))
 
       issue = instance_double(
@@ -133,6 +135,38 @@ RSpec.describe CanvasGanttsController, type: :controller do
       expect(controller.send(:preprocess_draft_intent, issue, intent)).to eq(
         start_date: Date.new(2027, 1, 5),
         due_date: Date.new(2027, 1, 5)
+      )
+    end
+
+    it 'preserves calendar-day dates during direct edit preprocessing' do
+      resolver = instance_double(RedmineCanvasGantt::ProjectCalendarResolver)
+      allow(controller).to receive(:business_calendar_resolver).and_return(resolver)
+      allow(resolver).to receive(:normalize_date_interval)
+        .with(
+          start_date: '2027-01-02',
+          due_date: '2027-01-03',
+          changed_fields: %i[start_date due_date],
+          project: project,
+          mode: :legacy_unspecified,
+          date_placement_mode: :calendar_days
+        ).and_return(valid: true, start_date: Date.new(2027, 1, 2), due_date: Date.new(2027, 1, 3))
+
+      issue = instance_double(
+        Issue,
+        project: project,
+        project_id: project.id,
+        start_date: Date.new(2027, 1, 1),
+        due_date: Date.new(2027, 1, 4)
+      )
+      intent = {
+        start_date: '2027-01-02',
+        due_date: '2027-01-03',
+        date_placement_mode: 'calendar_days'
+      }
+
+      expect(controller.send(:preprocess_draft_intent, issue, intent)).to eq(
+        start_date: Date.new(2027, 1, 2),
+        due_date: Date.new(2027, 1, 3)
       )
     end
 
@@ -698,25 +732,25 @@ RSpec.describe CanvasGanttsController, type: :controller do
       user = double('User', id: 7, group_ids: [11, 12], logged?: true, login: 'alice', admin?: false)
       allow(User).to receive(:current).and_return(user)
 
-      allow(member_joined_scope).to receive(:where).with(
+      allow(tree_member_joined_scope).to receive(:where).with(
         members: { user_id: [7, 11, 12] }
       ).and_return(member_filtered_scope)
       allow(member_filtered_scope).to receive(:distinct).and_return(member_filtered_scope)
-      allow(member_filtered_scope).to receive(:to_a).and_return([member_tree_project, member_project])
+      allow(member_filtered_scope).to receive(:to_a).and_return([member_tree_project])
 
       result = controller.send(:filter_option_projects, [1, 2], member_projects_only: true)
 
-      expect(result).to eq([member_tree_project, member_project])
+      expect(result).to eq([member_tree_project])
     end
 
     it 'returns all active visible projects when current user is admin even if memberProjectsOnly is enabled' do
       user = double('User', id: 7, logged?: true, login: 'admin', admin?: true)
       allow(User).to receive(:current).and_return(user)
-      allow(member_active_scope).to receive(:to_a).and_return([member_tree_project, descendant_project, member_project])
+      allow(tree_project_scope).to receive(:to_a).and_return([member_tree_project, descendant_project])
 
       result = controller.send(:filter_option_projects, [1, 2], member_projects_only: true)
 
-      expect(result).to eq([member_tree_project, descendant_project, member_project])
+      expect(result).to eq([member_tree_project, descendant_project])
     end
 
     it 'returns no projects when memberProjectsOnly is enabled and current user is unavailable' do
@@ -953,6 +987,47 @@ RSpec.describe CanvasGanttsController, type: :controller do
       allow(Setting).to receive(:non_working_week_days).and_return(['6', '7'])
     end
 
+    { en: ['Search projects...', 'No matching projects'],
+      ja: ['プロジェクトを検索', '一致するプロジェクトがありません'] }.each do |locale, labels|
+      it "publishes project candidate search labels in #{locale}" do
+        previous_default_language = Setting.default_language
+        Setting.default_language = locale.to_s
+
+        begin
+          I18n.with_locale(locale) do
+            get :index, params: { project_id: 'demo' }
+
+            expect(response).to have_http_status(:ok)
+            i18n_payload = controller.instance_variable_get(:@i18n).stringify_keys
+            expect(i18n_payload['label_project_search_placeholder']).to eq(labels[0])
+            expect(i18n_payload['label_no_matching_projects']).to eq(labels[1])
+          end
+        ensure
+          Setting.default_language = previous_default_language
+        end
+      end
+    end
+
+    { en: ['Previous page', 'Next page'], ja: ['前のページ', '次のページ'] }.each do |locale, labels|
+      it "publishes action needed pagination labels in #{locale}" do
+        previous_default_language = Setting.default_language
+        Setting.default_language = locale.to_s
+
+        begin
+          I18n.with_locale(locale) do
+            get :index, params: { project_id: 'demo' }
+
+            expect(response).to have_http_status(:ok)
+            i18n_payload = controller.instance_variable_get(:@i18n).stringify_keys
+            expect(i18n_payload['label_action_previous_page']).to eq(labels[0])
+            expect(i18n_payload['label_action_next_page']).to eq(labels[1])
+          end
+        ensure
+          Setting.default_language = previous_default_language
+        end
+      end
+    end
+
     it 'includes row height labels in frontend i18n payload' do
       expect(Setting).not_to receive(:plugin_redmine_canvas_gantt)
 
@@ -983,6 +1058,10 @@ RSpec.describe CanvasGanttsController, type: :controller do
       expect(i18n_payload['label_leaf_issues_only']).to eq(canvas_gantt_t(:label_leaf_issues_only))
       expect(i18n_payload['label_include_closed_issues']).to eq(canvas_gantt_t(:label_include_closed_issues))
       expect(i18n_payload['label_today_onward_only']).to eq(canvas_gantt_t(:label_today_onward_only))
+      %w[label_conflict_intro label_conflict_badge label_conflict_use_remote_help label_conflict_retry_help
+         label_conflict_field_column label_conflict_local_column label_conflict_server_column].each do |key|
+        expect(i18n_payload[key]).to eq(canvas_gantt_t(key.to_sym))
+      end
       expect(i18n_payload['label_save_baseline_filtered']).to eq(canvas_gantt_t(:label_save_baseline_filtered))
       expect(i18n_payload['label_save_baseline_project']).to eq(canvas_gantt_t(:label_save_baseline_project))
       expect(i18n_payload['label_baseline_scope']).to eq(canvas_gantt_t(:label_baseline_scope))
@@ -993,6 +1072,11 @@ RSpec.describe CanvasGanttsController, type: :controller do
       expect(i18n_payload['label_display_settings_source_project']).to eq(canvas_gantt_t(:label_display_settings_source_project))
       expect(i18n_payload['label_display_settings_source_global']).to eq(canvas_gantt_t(:label_display_settings_source_global))
       expect(i18n_payload['label_display_settings_source_default']).to eq(canvas_gantt_t(:label_display_settings_source_default))
+      expect(i18n_payload['label_timer_recording_confirmed']).to eq(canvas_gantt_t(:label_timer_recording_confirmed))
+      expect(i18n_payload['label_timer_confirmed_other']).to eq(canvas_gantt_t(:label_timer_confirmed_other))
+      expect(i18n_payload['label_timer_retry_sync']).to eq(canvas_gantt_t(:label_timer_retry_sync))
+      expect(i18n_payload['label_timer_review_sync']).to eq(canvas_gantt_t(:label_timer_review_sync))
+      expect(i18n_payload['label_timer_storage_error']).to eq(canvas_gantt_t(:label_timer_storage_error))
       expect(response.body).not_to include('baseline_snapshots')
       expect(response.body).not_to include('tracker_icon_map')
       expect(response.body).not_to include('use_vite_dev_server')
@@ -1035,6 +1119,11 @@ RSpec.describe CanvasGanttsController, type: :controller do
         expect(i18n_payload['label_toggle_hierarchy_lines']).to eq(canvas_gantt_t(:label_toggle_hierarchy_lines))
         expect(i18n_payload['label_display_settings']).to eq(canvas_gantt_t(:label_display_settings))
         expect(i18n_payload['label_display_settings_source_global']).to eq(canvas_gantt_t(:label_display_settings_source_global))
+        expect(i18n_payload['label_timer_recording_confirmed']).to eq(canvas_gantt_t(:label_timer_recording_confirmed))
+        expect(i18n_payload['label_timer_confirmed_other']).to eq(canvas_gantt_t(:label_timer_confirmed_other))
+        expect(i18n_payload['label_timer_retry_sync']).to eq(canvas_gantt_t(:label_timer_retry_sync))
+        expect(i18n_payload['label_timer_review_sync']).to eq(canvas_gantt_t(:label_timer_review_sync))
+        expect(i18n_payload['label_timer_storage_error']).to eq(canvas_gantt_t(:label_timer_storage_error))
       end
     end
 
@@ -2261,25 +2350,95 @@ RSpec.describe CanvasGanttsController, type: :controller do
       )
     end
 
+    it 'forwards a read-only resolution review and serializes its guarded scope' do
+      coordinator = controller.send(:schedule_mutation_coordinator)
+      context = { token: 'reviewed-scope', task_ids: [10, 11], relations: [] }
+      allow(coordinator).to receive(:call).and_return(
+        RedmineCanvasGantt::ScheduleMutationCoordinator::Result.new(status: :ok,
+          entities: [], revisions: { 10 => 2, 11 => 3 }, invalidated_entity_ids: [], resolution_context: context)
+      )
+      post :schedule_mutation, params: { project_id: 'demo', operation_id: 'review',
+        resolution: { task_ids: [10], preview: true }, changes: [] }, format: :json
+      expect(response).to have_http_status(:ok)
+      expect(coordinator).to have_received(:call) do |**args|
+        expect(args[:resolution][:task_ids].map(&:to_i)).to eq([10])
+        expect(args[:resolution][:preview].to_s).to eq('true')
+      end
+      expect(JSON.parse(response.body)['resolution_context']).to eq(context.stringify_keys)
+    end
+
+    it 'serializes an adjusted dependent task without treating it as a conflict' do
+      adjustments = [{ task_id: 11, before_start_date: '2027-01-06', before_due_date: '2027-01-07',
+                       start_date: '2027-01-08', due_date: '2027-01-09' }]
+      allow(controller.send(:schedule_mutation_coordinator)).to receive(:call).and_return(
+        RedmineCanvasGantt::ScheduleMutationCoordinator::Result.new(
+          status: :validation_error, entities: [], revisions: {}, invalidated_entity_ids: [],
+          errors: ['Review the adjusted schedule before applying.'], adjustments: adjustments
+        )
+      )
+
+      post :schedule_mutation, params: { project_id: 'demo', operation_id: 'apply',
+        resolution: { task_ids: [10], token: 'pinned' },
+        changes: [{ task_id: 10, start_date: '2027-01-04' }] }, format: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      body = JSON.parse(response.body)
+      expect(body['adjustments']).to eq(adjustments.map(&:stringify_keys))
+      expect(body['conflicts']).to be_nil
+    end
+
     it 'exposes a single operation boundary for a multi-issue schedule change' do
+      coordinator = controller.send(:schedule_mutation_coordinator)
       post :schedule_mutation,
            params: {
              project_id: 'demo',
              operation_id: 'schedule:test-a-b',
              base_revisions: { '10' => 1, '11' => 1 },
+             date_placement_mode: 'calendar_days',
              changes: [
-               { task_id: 10, start_date: '2027-01-04', due_date: '2027-01-05' },
-               { task_id: 11, start_date: '2027-01-06', due_date: '2027-01-07' }
+               { task_id: 10, start_date: '2027-01-04', due_date: '2027-01-05', date_placement_mode: 'calendar_days' },
+               { task_id: 11, start_date: '2027-01-06', due_date: '2027-01-07', date_placement_mode: 'working_days' }
              ]
            },
            format: :json
 
       expect(response).to have_http_status(:ok)
+      expect(coordinator).to have_received(:call) do |**args|
+        expect(args[:date_placement_mode]).to eq(:calendar_days)
+        expect(args[:changes].map { |change| change[:date_placement_mode] }).to eq(%w[calendar_days working_days])
+      end
       expect(JSON.parse(response.body)).to include(
         'status' => 'ok',
         'operation_id' => 'schedule:test-a-b',
         'completeness' => 'complete'
       )
+    end
+
+    it 'serializes every schedule conflict with the legacy first-conflict field' do
+      conflicts = [10, 12].map { |id| { task_id: id, expected_revision: 1, actual_revision: 2 } }
+      allow(controller.send(:schedule_mutation_coordinator)).to receive(:call).and_return(
+        RedmineCanvasGantt::ScheduleMutationCoordinator::Result.new(
+          status: :conflict,
+          entities: [{ id: 10, lock_version: 2 }, { id: 12, lock_version: 2 }],
+          revisions: { 10 => 2, 12 => 2 },
+          invalidated_entity_ids: [10, 12],
+          conflict: conflicts.first,
+          conflicts: conflicts
+        )
+      )
+
+      post :schedule_mutation, params: {
+        project_id: 'demo', operation_id: 'schedule:conflicts',
+        base_revisions: { '10' => 1, '11' => 1, '12' => 1 },
+        changes: [10, 11, 12].map { |id| { task_id: id, start_date: '2027-03-01' } }
+      }, format: :json
+
+      expect(response).to have_http_status(:conflict)
+      body = JSON.parse(response.body)
+      expect(body['conflicts']).to eq(conflicts.map(&:stringify_keys))
+      expect(body['conflict']).to eq(body['conflicts'].first)
+      expect(body['entities'].map { |entity| entity['id'] }).to eq([10, 12])
+      expect(body['revisions']).to eq('10' => 2, '12' => 2)
     end
 
     it 'rejects a calendar-sensitive mutation when the client revision is stale' do
