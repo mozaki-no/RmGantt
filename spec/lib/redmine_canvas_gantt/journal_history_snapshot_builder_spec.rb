@@ -2,7 +2,8 @@ require_relative '../../spec_helper'
 require_relative '../../../lib/redmine_canvas_gantt/journal_history_snapshot_builder'
 
 RSpec.describe RedmineCanvasGantt::JournalHistorySnapshotBuilder do
-  IssueRow = Struct.new(:id, :start_date, :due_date, :done_ratio, :status_id, :created_on, keyword_init: true)
+  IssueRow = Struct.new(:id, :parent_id, :start_date, :due_date, :done_ratio, :status_id, :estimated_hours, :created_on,
+                        keyword_init: true)
 
   let(:project) { Struct.new(:id).new(1) }
   let(:at) { Time.utc(2026, 9, 21, 14, 59, 59) }
@@ -13,9 +14,15 @@ RSpec.describe RedmineCanvasGantt::JournalHistorySnapshotBuilder do
   end
   let(:rows) { [] }
   let(:received) { [] }
+  let(:rules) do
+    described_class::DerivationRules.new(
+      dates_derived: true, done_ratio_derived: true, use_status_for_done_ratio: false,
+      closed_status_ids: [5], default_done_ratio_by_status_id: {}
+    )
+  end
 
   subject(:builder) do
-    described_class.new(journal_detail_rows: lambda { |ids, time|
+    described_class.new(rules: rules, journal_detail_rows: lambda { |ids, time|
       received << [ids, time]
       rows
     })
@@ -59,5 +66,51 @@ RSpec.describe RedmineCanvasGantt::JournalHistorySnapshotBuilder do
 
     expect(snapshot[:tasks_by_issue_id].keys).to eq(['10'])
     expect(received.first.first).to eq([10])
+  end
+
+  describe 'parent issues, whose derived values Redmine does not journal' do
+    def row(id, parent_id: nil, start_date: nil, due_date: nil, done_ratio: 0, status_id: 1, estimated_hours: nil)
+      IssueRow.new(id: id, parent_id: parent_id, start_date: start_date, due_date: due_date, done_ratio: done_ratio,
+                   status_id: status_id, estimated_hours: estimated_hours, created_on: Time.utc(2026, 9, 1))
+    end
+
+    let(:parent) { row(1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 10, 30), done_ratio: 70) }
+    let(:child_a) do
+      row(2, parent_id: 1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 10, 10), done_ratio: 100, estimated_hours: 30)
+    end
+    let(:child_b) do
+      row(3, parent_id: 1, start_date: Date.new(2026, 10, 5), due_date: Date.new(2026, 10, 30), done_ratio: 40, estimated_hours: 10)
+    end
+
+    it 'rebuilds dates and weighted progress from the children as they were' do
+      rows.replace([
+        [2, 'done_ratio', '50'],
+        [3, 'due_date', '2026-10-20'],
+        [3, 'estimated_hours', '30.0']
+      ])
+
+      tasks = builder.build(project: project, issues: [parent, child_a, child_b], at: at, date: date)[:tasks_by_issue_id]
+
+      expect(tasks['1']).to include(baseline_start_date: '2026-10-01', baseline_due_date: '2026-10-20', baseline_done_ratio: 45)
+    end
+
+    it 'derives grandparents from their child parents and counts closed children as done' do
+      grandchild = row(4, parent_id: 3, start_date: Date.new(2026, 11, 1), due_date: Date.new(2026, 11, 5), status_id: 5)
+      rows.replace([[2, 'done_ratio', '0'], [2, 'estimated_hours', nil], [3, 'estimated_hours', nil]])
+
+      tasks = builder.build(project: project, issues: [parent, child_a, child_b, grandchild], at: at, date: date)[:tasks_by_issue_id]
+
+      expect(tasks['3']).to include(baseline_start_date: '2026-11-01', baseline_due_date: '2026-11-05', baseline_done_ratio: 100)
+      expect(tasks['1']).to include(baseline_start_date: '2026-10-01', baseline_due_date: '2026-11-05', baseline_done_ratio: 50)
+    end
+
+    it 'keeps journaled values when Redmine does not derive parent attributes' do
+      rules.dates_derived = false
+      rules.done_ratio_derived = false
+
+      tasks = builder.build(project: project, issues: [parent, child_a, child_b], at: at, date: date)[:tasks_by_issue_id]
+
+      expect(tasks['1']).to include(baseline_due_date: '2026-10-30', baseline_done_ratio: 70)
+    end
   end
 end

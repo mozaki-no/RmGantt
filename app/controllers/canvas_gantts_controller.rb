@@ -670,7 +670,7 @@ class CanvasGanttsController < ApplicationController
     at = history_baseline_moment(date, params[:time].to_s)
     issues = data_payload_budget.load_records(
       Issue.visible.where(project_id: descendant_project_ids)
-           .select(:id, :start_date, :due_date, :done_ratio, :status_id, :created_on),
+           .select(:id, :parent_id, :start_date, :due_date, :done_ratio, :status_id, :estimated_hours, :created_on),
       resource: 'history_issues',
       limit: data_payload_budget.issue_limit
     )

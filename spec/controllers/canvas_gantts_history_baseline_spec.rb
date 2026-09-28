@@ -26,6 +26,14 @@ RSpec.describe CanvasGanttsController, type: :controller do
     fresh.current_journal.update_column(:created_on, at)
   end
 
+  def change_issue_of(target, at:, **attributes)
+    fresh = Issue.find(target.id)
+    fresh.init_journal(admin)
+    attributes.each { |key, value| fresh.send("#{key}=", value) }
+    fresh.save!
+    fresh.current_journal.update_column(:created_on, at)
+  end
+
   def fetch_history(date, time = nil)
     get :history_baseline, params: { project_id: project.id, date: date, time: time, format: :json }.compact
   end
@@ -66,6 +74,25 @@ RSpec.describe CanvasGanttsController, type: :controller do
     fetch_history('2026-09-05', '25:00')
 
     expect(response).to have_http_status(:unprocessable_entity)
+  end
+
+  it 'rebuilds a parent issue from its children, since Redmine does not journal derived parent values' do
+    allow(Setting).to receive(:parent_issue_dates).and_return('derived')
+    allow(Setting).to receive(:parent_issue_done_ratio).and_return('derived')
+    child = Issue.create!(project: project, tracker: issue.tracker, author: admin, subject: 'child',
+                          priority: issue.priority, status: IssueStatus.find(1), parent_issue_id: issue.id,
+                          start_date: Date.new(2026, 9, 1), due_date: Date.new(2026, 9, 10))
+    Issue.where(id: child.id).update_all(created_on: Time.utc(2026, 8, 2))
+    Journal.where(journalized_type: 'Issue', journalized_id: issue.id).delete_all
+    change_issue_of(child, at: Time.utc(2026, 9, 12, 3), due_date: Date.new(2026, 9, 25))
+    expect(issue.reload.due_date).to eq(Date.new(2026, 9, 25))
+    expect(Journal.where(journalized_type: 'Issue', journalized_id: issue.id)).to be_empty
+
+    fetch_history('2026-09-08')
+
+    expect(JSON.parse(response.body).dig('baseline', 'tasks_by_issue_id', issue.id.to_s)).to include(
+      'baseline_due_date' => '2026-09-10'
+    )
   end
 
   it 'leaves out issues created after the given day' do
