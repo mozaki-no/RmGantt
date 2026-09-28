@@ -350,6 +350,11 @@ class CanvasGanttsController < ApplicationController
     label_no_baseline_for_task: :label_no_baseline_for_task,
     label_baseline_diff_exists: :label_baseline_diff_exists,
     label_baseline_diff_none: :label_baseline_diff_none,
+    label_history_compare: :label_history_compare,
+    label_history_apply: :label_history_apply,
+    label_history_clear: :label_history_clear,
+    label_history_as_of: :label_history_as_of,
+    label_history_load_failed: :label_history_load_failed,
     label_help: :label_help,
     help_label_layout_filters: :help_label_layout_filters,
     label_help_toolbar_icons: :label_help_toolbar_icons,
@@ -495,13 +500,14 @@ class CanvasGanttsController < ApplicationController
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'baseline_task_state').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'baseline_snapshot').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'baseline_repository').to_s
+  require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'journal_history_snapshot_builder').to_s
 
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'actual_workload_builder').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'mutation_authorization_policy').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'issue_mutation_service').to_s
 
   helper RedmineCanvasGantt::ViteAssetHelper
-  accept_api_auth :actual_workload, :data, :queries, :edit_meta, :edit_meta_preview, :update, :destroy_task, :bulk_create_subtasks, :create_relation, :update_relation, :destroy_relation, :save_baseline
+  accept_api_auth :actual_workload, :data, :queries, :edit_meta, :edit_meta_preview, :update, :destroy_task, :bulk_create_subtasks, :create_relation, :update_relation, :destroy_relation, :save_baseline, :history_baseline
 
   before_action :resolve_canvas_project
   before_action :set_permissions
@@ -644,6 +650,33 @@ class CanvasGanttsController < ApplicationController
       warnings: warnings
     )
   rescue ArgumentError => e
+    render json: { error: e.message }, status: :unprocessable_entity
+  rescue RedmineCanvasGantt::DataPayloadBudget::Exceeded => e
+    render_data_payload_limit(e)
+  rescue => e
+    render_internal_error(e)
+  end
+
+  # GET /projects/:project_id/canvas_gantt/history_baseline.json?date=YYYY-MM-DD
+  # Rebuilds the visible issues' state at the end of the given day from the
+  # issue journals. Read-only, so view_canvas_gantt is enough.
+  def history_baseline
+    raw_date = params.require(:date).to_s
+    raise ArgumentError, 'Invalid history date format' unless raw_date.match?(/\A\d{4}-\d{2}-\d{2}\z/)
+
+    date = Date.iso8601(raw_date)
+    at = date.in_time_zone(User.current.time_zone || Time.zone).end_of_day
+    issues = data_payload_budget.load_records(
+      Issue.visible.where(project_id: descendant_project_ids)
+           .select(:id, :start_date, :due_date, :done_ratio, :status_id, :created_on),
+      resource: 'history_issues',
+      limit: data_payload_budget.issue_limit
+    )
+    snapshot = RedmineCanvasGantt::JournalHistorySnapshotBuilder.new.build(
+      project: @project, issues: issues, at: at, date: date
+    )
+    render body: data_payload_budget.encode_json({ baseline: snapshot }), content_type: 'application/json'
+  rescue ArgumentError, ActionController::ParameterMissing => e
     render json: { error: e.message }, status: :unprocessable_entity
   rescue RedmineCanvasGantt::DataPayloadBudget::Exceeded => e
     render_data_payload_limit(e)

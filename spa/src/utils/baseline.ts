@@ -1,5 +1,5 @@
 import type { Task } from '../types';
-import type { BaselineSaveScope, BaselineSnapshot, BaselineTaskState } from '../types/baseline';
+import type { BaselineSaveScope, BaselineScope, BaselineSnapshot, BaselineTaskState } from '../types/baseline';
 import { diffCalendarDays, formatDateOnly, parseDateOnly } from './dateOnly';
 
 export type BaselineDiff = {
@@ -13,6 +13,11 @@ export type BaselineDiff = {
     currentDurationDays: number | null;
     baselineDurationDays: number | null;
     durationDeltaDays: number | null;
+    // Only set for snapshots that record them (issue history).
+    currentDoneRatio?: number;
+    baselineDoneRatio?: number | null;
+    currentStatusId?: number;
+    baselineStatusId?: number | null;
 };
 
 const parseDateString = (value: string | null | undefined): number | null => {
@@ -51,6 +56,10 @@ export const formatBaselineCapturedAt = (value: string | null | undefined): stri
 
 export const normalizeBaselineSaveScope = (value: unknown): BaselineSaveScope => {
     return value === 'project' ? 'project' : 'filtered';
+};
+
+export const normalizeBaselineScope = (value: unknown): BaselineScope => {
+    return value === 'history' ? 'history' : normalizeBaselineSaveScope(value);
 };
 
 export const buildBaselineTaskDurationDays = (start: number | null, due: number | null): number | null => {
@@ -92,14 +101,21 @@ export const calculateBaselineDiff = (
             ? currentDurationDays - baselineDurationDays
             : null;
 
+    const hasDoneRatio = baselineTask.baselineDoneRatio !== undefined;
+    const hasStatus = baselineTask.baselineStatusId !== undefined;
+
     const hasDifference =
         startDeltaDays !== 0 ||
         dueDeltaDays !== 0 ||
         durationDeltaDays !== 0 ||
         currentStartDate !== baselineStartDate ||
-        currentDueDate !== baselineDueDate;
+        currentDueDate !== baselineDueDate ||
+        (hasDoneRatio && baselineTask.baselineDoneRatio !== task.ratioDone) ||
+        (hasStatus && baselineTask.baselineStatusId !== task.statusId);
 
     return {
+        ...(hasDoneRatio ? { currentDoneRatio: task.ratioDone, baselineDoneRatio: baselineTask.baselineDoneRatio } : {}),
+        ...(hasStatus ? { currentStatusId: task.statusId, baselineStatusId: baselineTask.baselineStatusId } : {}),
         hasDifference,
         currentStartDate,
         currentDueDate,

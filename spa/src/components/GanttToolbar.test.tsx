@@ -21,6 +21,7 @@ vi.mock('../utils/navigation', () => ({
 vi.mock('../api/client', () => ({
     apiClient: {
         saveBaseline: vi.fn(),
+        fetchHistoryBaseline: vi.fn(),
         fetchData: vi.fn(),
         fetchQueries: vi.fn()
     }
@@ -368,6 +369,34 @@ describe('GanttToolbar shortcuts', () => {
         expect(within(menu).getByRole('checkbox', { name: 'Show baseline comparison' })).toBeInTheDocument();
         expect(within(menu).queryByTestId('baseline-save-filtered-button')).not.toBeInTheDocument();
         expect(within(menu).queryByTestId('baseline-save-project-button')).not.toBeInTheDocument();
+    });
+
+    it('compares with issue history for the chosen date and turns the comparison on', async () => {
+        useTaskStore.setState({
+            ...useTaskStore.getState(),
+            permissions: { editable: false, viewable: true, baselineEditable: false }
+        });
+        useUIStore.setState({ showBaseline: false });
+        const history = {
+            snapshotId: 'history-2026-09-21',
+            projectId: '1',
+            capturedAt: '2026-09-21T14:59:59Z',
+            scope: 'history' as const,
+            historyDate: '2026-09-21',
+            tasksByIssueId: {}
+        };
+        vi.mocked(apiClient.fetchHistoryBaseline).mockResolvedValue({ snapshot: history, warnings: [] });
+
+        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+
+        fireEvent.click(screen.getByTestId('baseline-save-menu-button'));
+        fireEvent.change(screen.getByTestId('baseline-history-date-input'), { target: { value: '2026-09-21' } });
+        fireEvent.click(screen.getByTestId('baseline-history-apply-button'));
+
+        await waitFor(() => expect(useBaselineStore.getState().snapshot).toEqual(history));
+        expect(apiClient.fetchHistoryBaseline).toHaveBeenCalledWith('2026-09-21');
+        expect(useUIStore.getState().showBaseline).toBe(true);
+        useBaselineStore.getState().clearHistory();
     });
 
     it('shows a disabled visibility action when no baseline exists', () => {

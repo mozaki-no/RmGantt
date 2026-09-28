@@ -94,6 +94,11 @@ export const HtmlOverlay: React.FC = () => {
     const showStartDateOnly = useUIStore(state => state.showStartDateOnly);
     const showDueDateOnly = useUIStore(state => state.showDueDateOnly);
     const baselineSnapshot = useBaselineStore(state => state.snapshot);
+    const taskStatuses = useTaskStore(state => state.taskStatuses);
+    const baselineStatusName = React.useCallback((statusId: number | null | undefined) => {
+        if (statusId === null || statusId === undefined) return '-';
+        return taskStatuses.find((status) => status.id === statusId)?.name ?? `#${statusId}`;
+    }, [taskStatuses]);
     const editMetaByTaskId = useEditMetaStore(state => state.metaByTaskId);
     const fetchEditMeta = useEditMetaStore(state => state.fetchEditMeta);
 
@@ -751,6 +756,8 @@ export const HtmlOverlay: React.FC = () => {
                     baselineScope={baselineSnapshot.scope === 'project'
                         ? (i18n.t('label_baseline_scope_project') || 'Whole project')
                         : (i18n.t('label_baseline_scope_filtered') || 'Current filtered view')}
+                    historyDate={baselineSnapshot.scope === 'history' ? (baselineSnapshot.historyDate ?? null) : null}
+                    statusName={baselineStatusName}
                 />
             )}
 

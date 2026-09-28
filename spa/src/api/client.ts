@@ -16,7 +16,7 @@ import type { TaskEditMeta, InlineEditSettings, CustomFieldMeta, EditOption, Edi
 import type { BaselineSaveScope, BaselineSnapshot, BaselineTaskState } from '../types/baseline';
 import { buildIssueQueryParams, parseResolvedQueryState, type ResolvedQueryState } from '../utils/queryParams';
 import { normalizeQueryContext } from '../query/queryStateCodec';
-import { normalizeBaselineSaveScope, parseBaselineDateValue } from '../utils/baseline';
+import { normalizeBaselineScope, parseBaselineDateValue } from '../utils/baseline';
 import type { QueryContext } from '../query/types';
 import type { BusinessCalendarPayload } from '../types/businessCalendar';
 import type { DatePlacementMode } from '../types/constraints';
@@ -658,6 +658,11 @@ const parseFilterOptions = (value: unknown, tasks: Task[]): FilterOptions => {
     };
 };
 
+const parseOptionalInteger = (value: unknown): number | null => {
+    const parsed = typeof value === 'string' ? Number(value) : value;
+    return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : null;
+};
+
 const parseBaselineSnapshot = (value: unknown): { snapshot: BaselineSnapshot | null; warnings: string[] } => {
     const warnings: string[] = [];
     const root = asRecord(value);
@@ -720,7 +725,9 @@ const parseBaselineSnapshot = (value: unknown): { snapshot: BaselineSnapshot | n
         tasksByIssueId[String(issueIdValue)] = {
             issueId: String(issueIdValue),
             baselineStartDate,
-            baselineDueDate
+            baselineDueDate,
+            ...(taskRecord.baseline_done_ratio !== undefined ? { baselineDoneRatio: parseOptionalInteger(taskRecord.baseline_done_ratio) } : {}),
+            ...(taskRecord.baseline_status_id !== undefined ? { baselineStatusId: parseOptionalInteger(taskRecord.baseline_status_id) } : {})
         };
     });
 
@@ -733,7 +740,8 @@ const parseBaselineSnapshot = (value: unknown): { snapshot: BaselineSnapshot | n
                 ? capturedByIdValue
                 : null,
             capturedByName: typeof capturedByNameValue === 'string' ? capturedByNameValue : null,
-            scope: normalizeBaselineSaveScope(scopeValue),
+            scope: normalizeBaselineScope(scopeValue),
+            ...(typeof root.history_date === 'string' ? { historyDate: root.history_date } : {}),
             tasksByIssueId
         },
         warnings
@@ -967,6 +975,19 @@ export const apiClient = {
             baseline: baselinePayload.snapshot,
             warnings: [...warnings, ...baselinePayload.warnings]
         };
+    },
+
+    fetchHistoryBaseline: async (date: string): Promise<{ snapshot: BaselineSnapshot | null; warnings: string[] }> => {
+        const config = getConfig();
+        const query = new URLSearchParams(buildViewContextQuery(config));
+        query.set('date', date);
+        const url = new URL(`${config.apiBase}/history_baseline.json?${query.toString()}`, window.location.origin).toString();
+        const response = await sessionFetch(url, { headers: buildJsonHeaders(config) });
+        if (!response.ok) {
+            throw new Error(`Failed to load history baseline (${response.status})`);
+        }
+        const root = asRecord(await response.json());
+        return parseBaselineSnapshot(root?.baseline);
     },
 
     fetchEditMeta: async (taskId: string, targetProjectId?: number, targetTrackerId?: number, targetStatusId?: number, draftIntent?: Record<string, unknown>): Promise<TaskEditMeta> => {

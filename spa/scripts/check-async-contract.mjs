@@ -12,12 +12,13 @@ const allowedMutationBoundary = new Set([
 const allowedReadBoundaries = new Set([
   'api/client.ts',
   'components/IssueIframeDialog.tsx',
+  'stores/BaselineStore.ts',
   'stores/EditMetaStore.ts',
   'stores/WorkloadStore.ts',
   'stores/TaskStore.ts'
 ]);
 const mutationPattern = /apiClient\.(updateTask|updateTaskFields|createRelation|updateRelation|deleteRelation|deleteTask|bulkCreateSubtasks|saveBaseline)\s*\(/;
-const readPattern = /apiClient\.(fetchActualWorkload|fetchData|fetchQueries|fetchEditMeta|getSubtaskTrackers)\s*\(/;
+const readPattern = /apiClient\.(fetchActualWorkload|fetchData|fetchHistoryBaseline|fetchQueries|fetchEditMeta|getSubtaskTrackers)\s*\(/;
 
 const filesUnder = async (directory) => {
   const entries = await readdir(directory, { withFileTypes: true });

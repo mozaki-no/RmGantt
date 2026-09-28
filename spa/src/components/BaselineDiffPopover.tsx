@@ -27,7 +27,9 @@ export const BaselineDiffPopover: React.FC<{
     baselineCapturedAt: string;
     baselineCapturedBy: string;
     baselineScope: string;
-}> = ({ popoverRef, position, task, diff, baselineCapturedAt, baselineCapturedBy, baselineScope }) => {
+    historyDate?: string | null;
+    statusName?: (statusId: number | null | undefined) => string;
+}> = ({ popoverRef, position, task, diff, baselineCapturedAt, baselineCapturedBy, baselineScope, historyDate = null, statusName }) => {
     const [resolvedPosition, setResolvedPosition] = React.useState(position);
     const currentDurationDays = diff?.currentDurationDays ?? null;
     const baselineDurationDays = diff?.baselineDurationDays ?? null;
@@ -64,6 +66,25 @@ export const BaselineDiffPopover: React.FC<{
         { label: i18n.t('field_due_date') || 'Due', current: formatBaselineDate(diff?.currentDueDate ?? null), baseline: formatBaselineDate(diff?.baselineDueDate ?? null), delta: formatDeltaDays(diff?.dueDeltaDays ?? null) },
         { label: i18n.t('label_baseline_duration') || 'Duration', current: currentDurationDays === null ? '-' : `${currentDurationDays}d`, baseline: baselineDurationDays === null ? '-' : `${baselineDurationDays}d`, delta: formatDeltaDays(diff?.durationDeltaDays ?? null) }
     ];
+    if (diff && diff.baselineDoneRatio !== undefined) {
+        const past = diff.baselineDoneRatio;
+        const current = diff.currentDoneRatio ?? null;
+        rows.push({
+            label: i18n.t('field_done_ratio') || 'Progress',
+            current: current === null ? '-' : `${current}%`,
+            baseline: past === null ? '-' : `${past}%`,
+            delta: past === null || current === null || current === past ? '' : `${current > past ? '+' : ''}${current - past}%`
+        });
+    }
+    if (diff && diff.baselineStatusId !== undefined) {
+        const resolveName = statusName ?? ((statusId: number | null | undefined) => (statusId === null || statusId === undefined ? '-' : `#${statusId}`));
+        rows.push({
+            label: i18n.t('field_status') || 'Status',
+            current: resolveName(diff.currentStatusId),
+            baseline: resolveName(diff.baselineStatusId),
+            delta: diff.currentStatusId === diff.baselineStatusId ? '' : '*'
+        });
+    }
 
     return createPortal(
         <div
@@ -94,14 +115,22 @@ export const BaselineDiffPopover: React.FC<{
                 <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.45 }}>
                     <span style={{ fontWeight: 600, color: '#0f172a' }}>#{task.id}</span> {task.subject}
                 </div>
-                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>
-                    {(i18n.t('label_baseline_saved_meta') || 'Saved %{captured_at} by %{captured_by}')
-                        .replace('%{captured_at}', baselineCapturedAt)
-                        .replace('%{captured_by}', baselineCapturedBy || (i18n.t('label_none') || 'Unknown'))}
-                </div>
-                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>
-                    {(i18n.t('label_baseline_scope') || 'Scope')}: {baselineScope}
-                </div>
+                {historyDate ? (
+                    <div data-testid="baseline-diff-history-meta" style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>
+                        {(i18n.t('label_history_as_of') || 'Issue history as of %{date}').replace('%{date}', historyDate)}
+                    </div>
+                ) : (
+                    <>
+                        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>
+                            {(i18n.t('label_baseline_saved_meta') || 'Saved %{captured_at} by %{captured_by}')
+                                .replace('%{captured_at}', baselineCapturedAt)
+                                .replace('%{captured_by}', baselineCapturedBy || (i18n.t('label_none') || 'Unknown'))}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45 }}>
+                            {(i18n.t('label_baseline_scope') || 'Scope')}: {baselineScope}
+                        </div>
+                    </>
+                )}
             </div>
 
             {!diff ? (
