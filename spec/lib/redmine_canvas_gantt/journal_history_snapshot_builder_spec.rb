@@ -74,7 +74,9 @@ RSpec.describe RedmineCanvasGantt::JournalHistorySnapshotBuilder do
                    status_id: status_id, estimated_hours: estimated_hours, created_on: Time.utc(2026, 9, 1))
     end
 
-    let(:parent) { row(1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 10, 30), done_ratio: 70) }
+    # Current values are consistent with Redmine's rules: dates span the
+    # children, progress 85 = (30h * 100 + 10h * 40) / (20h * 2).
+    let(:parent) { row(1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 10, 30), done_ratio: 85) }
     let(:child_a) do
       row(2, parent_id: 1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 10, 10), done_ratio: 100, estimated_hours: 30)
     end
@@ -95,13 +97,25 @@ RSpec.describe RedmineCanvasGantt::JournalHistorySnapshotBuilder do
     end
 
     it 'derives grandparents from their child parents and counts closed children as done' do
+      middle = row(3, parent_id: 1, start_date: Date.new(2026, 11, 1), due_date: Date.new(2026, 11, 5), done_ratio: 100)
       grandchild = row(4, parent_id: 3, start_date: Date.new(2026, 11, 1), due_date: Date.new(2026, 11, 5), status_id: 5)
-      rows.replace([[2, 'done_ratio', '0'], [2, 'estimated_hours', nil], [3, 'estimated_hours', nil]])
+      top = row(1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 11, 5), done_ratio: 100)
+      rows.replace([[4, 'due_date', '2026-11-20'], [4, 'status_id', '1'], [2, 'done_ratio', '0'], [2, 'estimated_hours', nil]])
 
-      tasks = builder.build(project: project, issues: [parent, child_a, child_b, grandchild], at: at, date: date)[:tasks_by_issue_id]
+      tasks = builder.build(project: project, issues: [top, child_a, middle, grandchild], at: at, date: date)[:tasks_by_issue_id]
 
-      expect(tasks['3']).to include(baseline_start_date: '2026-11-01', baseline_due_date: '2026-11-05', baseline_done_ratio: 100)
-      expect(tasks['1']).to include(baseline_start_date: '2026-10-01', baseline_due_date: '2026-11-05', baseline_done_ratio: 50)
+      expect(tasks['3']).to include(baseline_start_date: '2026-11-01', baseline_due_date: '2026-11-20', baseline_done_ratio: 0)
+      expect(tasks['1']).to include(baseline_start_date: '2026-10-01', baseline_due_date: '2026-11-20', baseline_done_ratio: 0)
+    end
+
+    it 'keeps journaled values for a parent whose current values the rules do not reproduce' do
+      # Progress written straight onto the parent (e.g. by a script), not derived from the children.
+      written = row(1, start_date: Date.new(2026, 10, 1), due_date: Date.new(2026, 10, 30), done_ratio: 50)
+      rows.replace([[1, 'done_ratio', '20'], [2, 'done_ratio', '10']])
+
+      tasks = builder.build(project: project, issues: [written, child_a, child_b], at: at, date: date)[:tasks_by_issue_id]
+
+      expect(tasks['1']).to include(baseline_done_ratio: 20, baseline_due_date: '2026-10-30')
     end
 
     it 'keeps journaled values when Redmine does not derive parent attributes' do
@@ -110,7 +124,7 @@ RSpec.describe RedmineCanvasGantt::JournalHistorySnapshotBuilder do
 
       tasks = builder.build(project: project, issues: [parent, child_a, child_b], at: at, date: date)[:tasks_by_issue_id]
 
-      expect(tasks['1']).to include(baseline_due_date: '2026-10-30', baseline_done_ratio: 70)
+      expect(tasks['1']).to include(baseline_due_date: '2026-10-30', baseline_done_ratio: 85)
     end
   end
 end

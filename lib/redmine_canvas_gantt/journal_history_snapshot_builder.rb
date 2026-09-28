@@ -41,7 +41,10 @@ module RedmineCanvasGantt
       states = existing.each_with_object({}) do |issue, result|
         result[issue.id] = past_state(issue, values_at.fetch(issue.id, {}))
       end
-      derive_parent_values(states)
+      current_states = existing.each_with_object({}) do |issue, result|
+        result[issue.id] = past_state(issue, {})
+      end
+      derive_parent_values(states, current_states)
 
       {
         snapshot_id: ["history", date.iso8601, time].compact.join('-'),
@@ -98,38 +101,58 @@ module RedmineCanvasGantt
     # Deepest parents first, so a parent sees its child parents' derived
     # values. Only children that existed at that moment count; a parent with
     # none was a leaf then and keeps its journaled values.
-    def derive_parent_values(states)
+    #
+    # A parent is derived only where the same rule reproduces its current
+    # value from its current children. Where it does not (values written
+    # directly, e.g. by a script, or children outside the loaded projects),
+    # the journaled value is kept, since the rule evidently was not in force.
+    def derive_parent_values(states, current_states)
       children = states.each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |(issue_id, state), result|
         result[state[:parent_id]] << issue_id if states.key?(state[:parent_id])
       end
       return if children.empty?
 
+      current_children = current_states.each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |(issue_id, state), result|
+        result[state[:parent_id]] << issue_id if current_states.key?(state[:parent_id])
+      end
       depth = {}
       depth_of = lambda do |issue_id|
         depth[issue_id] ||= states.key?(states[issue_id][:parent_id]) ? depth_of.call(states[issue_id][:parent_id]) + 1 : 0
       end
-      total_hours = {}
+      hours_then = {}
+      hours_now = {}
       children.keys.sort_by { |issue_id| -depth_of.call(issue_id) }.each do |parent_id|
-        kids = children[parent_id].map { |issue_id| states[issue_id] }
-        derive_dates(states[parent_id], kids)
-        derive_done_ratio(states[parent_id], children[parent_id], states, children, total_hours)
+        parent = states[parent_id]
+        current = current_states[parent_id]
+        kid_ids = children[parent_id]
+        current_kid_ids = current_children[parent_id]
+
+        if rules.dates_derived &&
+           derived_dates(current_kid_ids.map { |issue_id| current_states[issue_id] }) == [current[:start_date], current[:due_date]]
+          parent[:start_date], parent[:due_date] = derived_dates(kid_ids.map { |issue_id| states[issue_id] })
+        end
+
+        if done_ratio_derived_for?(current) &&
+           derived_done_ratio(current_kid_ids, current_states, current_children, hours_now) == current[:done_ratio] &&
+           done_ratio_derived_for?(parent)
+          parent[:done_ratio] = derived_done_ratio(kid_ids, states, children, hours_then)
+        end
       end
     end
 
-    def derive_dates(parent, kids)
-      return unless rules.dates_derived
-
-      parent[:start_date] = kids.map { |kid| kid[:start_date] }.compact.min
-      parent[:due_date] = kids.map { |kid| kid[:due_date] }.compact.max
-      if parent[:start_date] && parent[:due_date] && parent[:due_date] < parent[:start_date]
-        parent[:start_date], parent[:due_date] = parent[:due_date], parent[:start_date]
-      end
+    def derived_dates(kids)
+      start_date = kids.map { |kid| kid[:start_date] }.compact.min
+      due_date = kids.map { |kid| kid[:due_date] }.compact.max
+      start_date, due_date = due_date, start_date if start_date && due_date && due_date < start_date
+      [start_date, due_date]
     end
 
-    def derive_done_ratio(parent, kid_ids, states, children, total_hours)
-      return unless rules.done_ratio_derived
-      return if rules.use_status_for_done_ratio && rules.default_done_ratio_by_status_id.key?(parent[:status_id])
+    def done_ratio_derived_for?(state)
+      rules.done_ratio_derived &&
+        !(rules.use_status_for_done_ratio && rules.default_done_ratio_by_status_id.key?(state[:status_id]))
+    end
 
+    def derived_done_ratio(kid_ids, states, children, total_hours)
       hours = kid_ids.map { |issue_id| Rational(total_estimated_hours(issue_id, states, children, total_hours).to_s) }
       estimated = hours.select(&:positive?)
       average = estimated.any? ? estimated.sum / estimated.size : Rational(1)
@@ -138,7 +161,7 @@ module RedmineCanvasGantt
         ratio = rules.closed_status_ids.include?(kid[:status_id]) ? 100 : (kid[:done_ratio] || 0)
         (hours[index].positive? ? hours[index] : average) * ratio
       end
-      parent[:done_ratio] = (done / (average * kid_ids.size)).floor
+      (done / (average * kid_ids.size)).floor
     end
 
     def total_estimated_hours(issue_id, states, children, memo)
