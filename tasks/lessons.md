@@ -65,3 +65,37 @@
 - When a bulk reimplementation replaces a Redmine accessor, let it fall back to
   that accessor on any error. A future Redmine release changing the internals
   then costs speed, not correctness.
+
+## Scroll and render cost with large task lists
+
+- A component rendered inside `GanttContainer` re-renders on every scroll
+  frame, because the container subscribes to `viewport`. Anything that maps the
+  whole task list there (the hidden `A11yLayer` built 10,000 `<li>` aria labels)
+  has to be `React.memo`ed on its own store inputs, or scrolling at 10,000 tasks
+  spends 80–100 ms per wheel event re-rendering it.
+- `useTaskStore()` without a selector subscribes to the whole store, including
+  `viewport`, so the toolbar and its menus re-rendered on every scroll frame.
+  Select the fields a component shows (`useShallow` + `pickKeys`) and read the
+  viewport inside event handlers with `useTaskStore.getState()`. Keep whole-store
+  subscriptions where render calls store getters that read other state (the
+  workload store's `getOverloadCycleInfo`); a narrowed selector silently stops
+  those re-renders.
+- Measure a scroll regression by driving real wheel events in a browser with a
+  page that has a height. The benchmark page's `#root` has no height, so its
+  chart viewport collapses and scrolling looks free when it is not.
+- React's `onWheel` is passive. A wheel handler that scrolls the chart must be a
+  native `addEventListener('wheel', ..., { passive: false })` with
+  `preventDefault()`, or the Redmine page scrolls with it.
+- Size the Redmine root by measuring the page overflow after setting a first
+  estimate. Paddings and margins below the chart are theme-dependent, and a page
+  that overflows by even 24 px gets its own scrollbar next to the chart's.
+
+## Custom field serialization
+
+- `Issue#custom_field_values` builds a `CustomFieldValue` for every available
+  field and a new `CustomValue` record for every field the issue has no value
+  for. At 10,000 issues that construction was about 8 of the 10 seconds of the
+  data request. For a persisted, unchanged issue with preloaded custom values the
+  answer is the stored value or nil (Redmine applies the field default only when
+  `set_custom_field_default?` is true), so read the stored values directly and
+  fall back to the accessor for anything else.

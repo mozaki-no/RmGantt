@@ -23,9 +23,9 @@ export const WorkloadSidebar: React.FC<WorkloadSidebarProps> = ({
         getOverloadCycleInfo,
         suppressNextFocusedHistogramBarVerticalScroll
     } = useWorkloadStore();
-    const { viewport } = useTaskStore();
+    const viewportRowHeight = useTaskStore(state => state.viewport.rowHeight);
     const scrollRef = React.useRef<HTMLDivElement>(null);
-    const rowHeight = viewport.rowHeight * 2;
+    const rowHeight = viewportRowHeight * 2;
     const assignees = workloadData
         ? Array.from(workloadData.assignees.values()).sort((a, b) => a.assigneeName.localeCompare(b.assigneeName))
         : [];

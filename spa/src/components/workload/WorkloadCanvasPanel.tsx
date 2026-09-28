@@ -49,7 +49,8 @@ export const WorkloadCanvasPanel: React.FC<WorkloadCanvasPanelProps> = ({
         setFocusedHistogramBar,
         consumeFocusedHistogramBarVerticalScrollSuppression
     } = useWorkloadStore();
-    const { viewport, zoomLevel } = useTaskStore();
+    const viewport = useTaskStore(state => state.viewport);
+    const zoomLevel = useTaskStore(state => state.zoomLevel);
     const isSidebarResizing = useUIStore((state) => state.isSidebarResizing);
     const dragStateRef = useRef<DragState>({
         active: false,

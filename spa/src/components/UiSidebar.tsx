@@ -16,6 +16,7 @@ import { mergeColumnSettings, resolveVisibleColumnKeys } from './sidebar/sidebar
 import { useSidebarColumnSizing } from './sidebar/useSidebarColumnSizing';
 import { useSidebarDragAndDrop } from './sidebar/useSidebarDragAndDrop';
 import { useSidebarInlineEdit } from './sidebar/useSidebarInlineEdit';
+import { useSidebarWheelScroll } from './sidebar/useSidebarWheelScroll';
 import { SvgIcon } from '../icons/SvgIcon';
 import { getTaskNotification } from './sidebar/sidebarNotifications';
 import { parseTrackerIconMap, resolveTrackerIconKind } from './sidebar/trackerIconUtils';
@@ -201,6 +202,7 @@ export const UiSidebar: React.FC = () => {
     }, []);
     const trackerIconMap = React.useMemo(() => parseTrackerIconMap(settings.tracker_icon_map), [settings]);
     const bodyRef = React.useRef<HTMLDivElement>(null);
+    useSidebarWheelScroll(bodyRef);
 
     const { handleResizeStart } = useSidebarColumnSizing({ tasks, customFields, setColumnWidth });
     const {
@@ -261,12 +263,6 @@ export const UiSidebar: React.FC = () => {
         if (value instanceof Date) return value.toLocaleDateString();
         return '-';
     }, []);
-
-    const handleWheel = (e: React.WheelEvent) => {
-        updateViewport({
-            scrollY: Math.max(0, viewport.scrollY + e.deltaY)
-        });
-    };
 
     const renderEditableCell = (t: Task, field: string, content: React.ReactNode) => {
         const meta = editMetaByTaskId[t.id];
@@ -962,7 +958,6 @@ export const UiSidebar: React.FC = () => {
                     boxShadow: isRootDropActive ? `inset 0 0 0 1px ${sidebarRootDropBorder}` : 'none',
                     transition: 'background-color 0.2s, box-shadow 0.2s'
                 }}
-                onWheel={handleWheel}
                 onDragOver={handleRootDragOver}
                 onDrop={(e) => { void handleRootDrop(e); }}
                 onDragLeave={handleBodyDragLeave}

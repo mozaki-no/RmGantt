@@ -64,6 +64,8 @@ module RedmineCanvasGantt
     end
 
     def build_task_custom_field_values(issue)
+      return build_task_custom_field_values_from_stored(issue) if stored_values_readable?(issue)
+
       applicable_custom_field_ids = issue_applicable_custom_field_ids(issue)
       issue.custom_field_values.each_with_object({}) do |custom_field_value, values|
         custom_field = custom_field_value.custom_field
@@ -77,6 +79,52 @@ module RedmineCanvasGantt
     end
 
     private
+
+    # Issue#custom_field_values builds a CustomFieldValue for every available
+    # field and a new CustomValue record for every field the issue has no value
+    # for. On a 10,000-issue payload that object construction was most of the
+    # request time. For a persisted, unchanged issue whose custom values are
+    # already loaded, Redmine's answer is simply the stored value of each
+    # available field, or nil: CustomValue only applies the field default when
+    # Issue#set_custom_field_default? is true, which it is not for such an issue.
+    # Anything else (new or changed issues, or values already assigned in
+    # memory) keeps going through Redmine's accessor.
+    def stored_values_readable?(issue)
+      issue.is_a?(Issue) &&
+        issue.persisted? &&
+        !issue.changed? &&
+        issue.instance_variable_get(:@custom_field_values).nil? &&
+        issue.association(:custom_values).loaded?
+    rescue StandardError
+      false
+    end
+
+    def build_task_custom_field_values_from_stored(issue)
+      stored_values = {}
+      issue.custom_values.each do |custom_value|
+        # Redmine reads the first stored value of a single-value field.
+        stored_values[custom_value.custom_field_id] = custom_value.value unless stored_values.key?(custom_value.custom_field_id)
+      end
+
+      task_custom_fields(issue).each_with_object({}) do |custom_field, values|
+        values[custom_field.id.to_s] = stored_values[custom_field.id]
+      end
+    end
+
+    # The serializable single-value fields of an issue, in Redmine's
+    # available_custom_fields order, memoized per (project, tracker).
+    def task_custom_fields(issue)
+      key = field_scope_key(issue)
+      @task_custom_fields ||= {}
+      return @task_custom_fields[key] if @task_custom_fields.key?(key)
+
+      applicable_custom_field_ids = issue_applicable_custom_field_ids(issue)
+      @task_custom_fields[key] = Array(issue.available_custom_fields).select do |custom_field|
+        applicable_custom_field_ids.include?(custom_field.id) &&
+          !custom_field.multiple? &&
+          @supported_formats.include?(custom_field.field_format.to_s)
+      end
+    end
 
     # The custom field set of an issue is determined by its project and
     # tracker, so one representative per distinct pair yields the same union of
