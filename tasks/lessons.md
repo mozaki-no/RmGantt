@@ -99,3 +99,11 @@
   answer is the stored value or nil (Redmine applies the field default only when
   `set_custom_field_default?` is true), so read the stored values directly and
   fall back to the accessor for anything else.
+
+## Multi-tab timer E2E
+
+- The tab that loses a simultaneous timer start shows the "another timer is
+  running" notice, and its backdrop swallows later clicks. A test that races two
+  starts has to dismiss that notice before it touches either tab again, and must
+  wait for the revision it expects rather than read the session right after a
+  concurrent action.
