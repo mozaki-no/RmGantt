@@ -83,16 +83,19 @@ module RedmineCanvasGantt
     # Issue#custom_field_values builds a CustomFieldValue for every available
     # field and a new CustomValue record for every field the issue has no value
     # for. On a 10,000-issue payload that object construction was most of the
-    # request time. For a persisted, unchanged issue whose custom values are
-    # already loaded, Redmine's answer is simply the stored value of each
-    # available field, or nil: CustomValue only applies the field default when
-    # Issue#set_custom_field_default? is true, which it is not for such an issue.
-    # Anything else (new or changed issues, or values already assigned in
-    # memory) keeps going through Redmine's accessor.
+    # request time. For a persisted issue whose custom values are already
+    # loaded, Redmine's answer is simply the stored value of each available
+    # field, or nil: CustomValue only applies the field default when
+    # Issue#set_custom_field_default? is true, i.e. for a new record or a
+    # changed project or tracker. Those issues, and values already assigned in
+    # memory, keep going through Redmine's accessor. Only those two attributes
+    # are checked because a full changed? walked every attribute and cost more
+    # than the value lookup itself.
     def stored_values_readable?(issue)
       issue.is_a?(Issue) &&
         issue.persisted? &&
-        !issue.changed? &&
+        !issue.project_id_changed? &&
+        !issue.tracker_id_changed? &&
         issue.instance_variable_get(:@custom_field_values).nil? &&
         issue.association(:custom_values).loaded?
     rescue StandardError

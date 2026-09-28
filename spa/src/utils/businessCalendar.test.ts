@@ -279,3 +279,73 @@ describe('businessCalendar', () => {
         expect(result.metricsByTaskId.one.durationDays).toBe(1);
     });
 });
+
+describe('diffWorkingDays range counting', () => {
+    const walk = (from: number, to: number, projectId?: string | Set<number>): number => {
+        const step = from < to ? 1 : -1;
+        let current = from;
+        let delta = 0;
+        while (current !== to) {
+            current += step * 24 * 60 * 60 * 1000;
+            if (isWorkingDay(current, projectId)) delta += step;
+        }
+        return delta;
+    };
+
+    afterEach(() => {
+        configureBusinessCalendar(null);
+    });
+
+    it('matches a day-by-day walk across calendars, overrides and directions', () => {
+        configureBusinessCalendar({
+            status: 'ok',
+            revision: 'rev-range',
+            default_calendar_id: 'company',
+            project_calendar_ids: { 2: 'six-day' },
+            calendars: {
+                company: {
+                    id: 'company',
+                    name: 'Company',
+                    non_working_week_days: [0, 6],
+                    days: {
+                        '2027-01-02': { name: 'Saturday workday', type: 'working' },
+                        '2027-01-04': { name: 'Monday holiday', type: 'non_working' },
+                        '2027-01-05': { name: 'Redundant working', type: 'working' },
+                        '2027-03-21': { name: 'Sunday holiday', type: 'non_working' },
+                        '2028-02-29': { name: 'Leap holiday', type: 'non_working' }
+                    }
+                },
+                'six-day': {
+                    id: 'six-day',
+                    name: 'Six day',
+                    non_working_week_days: [0],
+                    days: { '2027-02-07': { name: 'Sunday workday', type: 'working' } }
+                }
+            }
+        });
+
+        let seed = 7;
+        const random = (): number => {
+            seed = (seed * 1103515245 + 12345) % 2147483648;
+            return seed / 2147483648;
+        };
+        const base = timestamp('2026-11-01');
+        const day = 24 * 60 * 60 * 1000;
+        const projects: Array<string | Set<number> | undefined> = [undefined, '1', '2', '99', new Set([5, 6])];
+
+        for (let index = 0; index < 400; index += 1) {
+            const from = base + Math.floor(random() * 700) * day;
+            const to = base + Math.floor(random() * 700) * day;
+            const projectId = projects[index % projects.length];
+            expect(diffWorkingDays(from, to, projectId)).toBe(walk(from, to, projectId));
+        }
+    });
+
+    it('matches the walk for the weekly fallback without a configured calendar', () => {
+        const from = timestamp('2027-01-01');
+        for (let offset = -30; offset <= 30; offset += 1) {
+            const to = from + offset * 24 * 60 * 60 * 1000;
+            expect(diffWorkingDays(from, to)).toBe(walk(from, to));
+        }
+    });
+});

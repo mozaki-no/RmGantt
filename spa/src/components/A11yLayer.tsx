@@ -3,6 +3,14 @@ import { useTaskStore } from '../stores/TaskStore';
 import { i18n } from '../utils/i18n';
 import type { Task } from '../types';
 import { toLocalDisplayDate } from '../utils/dateOnly';
+import { LayoutEngine } from '../engines/LayoutEngine';
+
+// The list mirrors the rows around the visible part of the chart. Mounting one
+// focusable item per task cost about a second of DOM work at 10,000 tasks.
+// The window moves in steps of A11Y_WINDOW_STEP rows, so a scroll re-renders the
+// list only when it crosses a step.
+export const A11Y_WINDOW_STEP = 25;
+const A11Y_WINDOW_OVERSCAN = 50;
 
 const formatAriaDate = (date: number | undefined, notSetLabel: string): string => (
     (date && Number.isFinite(date)) ? toLocalDisplayDate(date).toLocaleDateString() : notSetLabel
@@ -45,10 +53,27 @@ const A11yTaskItem = React.memo(({ task }: { task: Task }) => (
 ));
 A11yTaskItem.displayName = 'A11yTaskItem';
 
-// Memoized because GanttContainer re-renders on every scroll frame; the list only depends on tasks.
+// Memoized because GanttContainer re-renders on every scroll frame.
 export const A11yLayer: React.FC = React.memo(() => {
     const tasks = useTaskStore(state => state.tasks);
     const selectedTaskId = useTaskStore(state => state.selectedTaskId);
+    const windowStart = useTaskStore(state => {
+        const [startRow] = LayoutEngine.getVisibleRowRange(state.viewport, state.rowCount || state.tasks.length);
+        return Math.max(0, Math.floor(startRow / A11Y_WINDOW_STEP) * A11Y_WINDOW_STEP - A11Y_WINDOW_OVERSCAN);
+    });
+    const windowEnd = useTaskStore(state => {
+        const [, endRow] = LayoutEngine.getVisibleRowRange(state.viewport, state.rowCount || state.tasks.length);
+        return Math.ceil((endRow + 1) / A11Y_WINDOW_STEP) * A11Y_WINDOW_STEP + A11Y_WINDOW_OVERSCAN;
+    });
+
+    const listedTasks = React.useMemo(() => {
+        const windowed = LayoutEngine.sliceTasksInRowRange(tasks, windowStart, windowEnd);
+        // Keep the selected task listed so focus can follow a selection made
+        // anywhere in the chart.
+        if (!selectedTaskId || windowed.some(task => task.id === selectedTaskId)) return windowed;
+        const selected = tasks.find(task => task.id === selectedTaskId);
+        return selected ? [...windowed, selected] : windowed;
+    }, [selectedTaskId, tasks, windowEnd, windowStart]);
 
     const listRef = useRef<HTMLUListElement>(null);
 
@@ -76,7 +101,7 @@ export const A11yLayer: React.FC = React.memo(() => {
             }}
             aria-label={i18n.t('label_gantt_chart_task_list') || 'Gantt Chart Task List'}
         >
-            {tasks.map(task => <A11yTaskItem key={task.id} task={task} />)}
+            {listedTasks.map(task => <A11yTaskItem key={task.id} task={task} />)}
         </ul>
     );
 });

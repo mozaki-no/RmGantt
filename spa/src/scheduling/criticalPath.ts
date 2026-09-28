@@ -43,6 +43,55 @@ const hasValidDateRange = (task: Pick<Task, 'startDate' | 'dueDate'>): task is P
     task.startDate <= task.dueDate
 );
 
+class MinHeap<T> {
+    private readonly items: T[] = [];
+    private readonly keyOf: (item: T) => number;
+
+    constructor(keyOf: (item: T) => number) {
+        this.keyOf = keyOf;
+    }
+
+    get size(): number {
+        return this.items.length;
+    }
+
+    push(item: T): void {
+        const items = this.items;
+        items.push(item);
+        let index = items.length - 1;
+        const key = this.keyOf(item);
+        while (index > 0) {
+            const parent = (index - 1) >> 1;
+            if (this.keyOf(items[parent]) <= key) break;
+            items[index] = items[parent];
+            index = parent;
+        }
+        items[index] = item;
+    }
+
+    pop(): T | undefined {
+        const items = this.items;
+        if (items.length === 0) return undefined;
+        const top = items[0];
+        const last = items.pop() as T;
+        if (items.length === 0) return top;
+
+        const key = this.keyOf(last);
+        let index = 0;
+        for (;;) {
+            const left = index * 2 + 1;
+            if (left >= items.length) break;
+            const right = left + 1;
+            const child = right < items.length && this.keyOf(items[right]) < this.keyOf(items[left]) ? right : left;
+            if (this.keyOf(items[child]) >= key) break;
+            items[index] = items[child];
+            index = child;
+        }
+        items[index] = last;
+        return top;
+    }
+}
+
 const buildTopologicalOrder = (taskIds: string[], edges: SchedulingEdge[], inputOrder: Map<string, number>): string[] => {
     const indegree = new Map<string, number>();
     const outgoing = new Map<string, SchedulingEdge[]>();
@@ -59,22 +108,26 @@ const buildTopologicalOrder = (taskIds: string[], edges: SchedulingEdge[], input
         outgoing.set(edge.predecessorId, nextEdges);
     });
 
-    const queue = [...taskIds]
-        .filter((taskId) => (indegree.get(taskId) ?? 0) === 0)
-        .sort((left, right) => (inputOrder.get(left) ?? 0) - (inputOrder.get(right) ?? 0));
+    // Kahn's algorithm that always takes the ready task with the lowest input
+    // order. A binary heap keeps that O(n log n); re-sorting an array queue on
+    // every push and shifting its head was quadratic and took over a second at
+    // 10,000 tasks.
+    const ready = new MinHeap<string>((taskId) => inputOrder.get(taskId) ?? 0);
+    taskIds.forEach((taskId) => {
+        if ((indegree.get(taskId) ?? 0) === 0) ready.push(taskId);
+    });
     const orderedTaskIds: string[] = [];
 
-    while (queue.length > 0) {
-        const taskId = queue.shift();
-        if (!taskId) continue;
+    while (ready.size > 0) {
+        const taskId = ready.pop();
+        if (taskId === undefined) continue;
 
         orderedTaskIds.push(taskId);
         (outgoing.get(taskId) ?? []).forEach((edge) => {
             const nextIndegree = (indegree.get(edge.successorId) ?? 0) - 1;
             indegree.set(edge.successorId, nextIndegree);
             if (nextIndegree === 0) {
-                queue.push(edge.successorId);
-                queue.sort((left, right) => (inputOrder.get(left) ?? 0) - (inputOrder.get(right) ?? 0));
+                ready.push(edge.successorId);
             }
         });
     }

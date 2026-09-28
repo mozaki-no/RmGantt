@@ -61,11 +61,23 @@ RSpec.describe RedmineCanvasGantt::CustomFieldExtractor do
     expect(extractor.build_task_custom_field_values(issue)).to include(field.id.to_s => 'edited')
   end
 
-  it 'uses Redmine values for a changed issue' do
+  it 'uses Redmine values for an issue whose tracker changed in memory' do
+    field = IssueCustomField.create!(
+      name: 'Canvas tracker-change default', field_format: 'string', default_value: 'fallback',
+      is_for_all: true, trackers: Tracker.all
+    )
     issue = preloaded_issues.find { |candidate| candidate.id == 1 }
-    issue.subject = 'Changed in memory'
+    issue.tracker = Tracker.where.not(id: issue.tracker_id).first
     expect(issue).to receive(:custom_field_values).and_call_original
 
-    extractor.build_task_custom_field_values(issue)
+    expect(extractor.build_task_custom_field_values(issue)).to include(field.id.to_s => 'fallback')
+  end
+
+  it 'keeps reading stored values when only unrelated attributes changed' do
+    issue = preloaded_issues.find { |candidate| candidate.id == 1 }
+    issue.subject = 'Changed in memory'
+    expect(issue).not_to receive(:custom_field_values)
+
+    expect(extractor.build_task_custom_field_values(issue)).to eq(redmine_values(1))
   end
 end

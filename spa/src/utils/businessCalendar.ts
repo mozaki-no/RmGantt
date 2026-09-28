@@ -8,6 +8,7 @@ import {
     addCalendarDays,
     calendarDateKey,
     calendarWeekday,
+    parseDateOnly,
     timelineToCalendarDate
 } from './dateOnly';
 import { getNonWorkingWeekDays } from './nonWorkingWeekDays';
@@ -256,11 +257,81 @@ export const shiftByWorkingDays = (timestamp: number, days: number, projectId?: 
     return date;
 };
 
-export const diffWorkingDays = (fromTimestamp: number, toTimestamp: number, projectId?: ProjectCalendarArgument): number => {
-    const from = timelineToCalendarDate(fromTimestamp);
-    const to = timelineToCalendarDate(toTimestamp);
-    if (from === to) return 0;
+const CALENDAR_DAY_MS = 24 * 60 * 60 * 1000;
 
+const weekdayOfDayIndex = (dayIndex: number): number => (((dayIndex + 4) % 7) + 7) % 7;
+
+type OverrideAdjustments = {
+    dayIndexes: number[];
+    // prefix[i] is the sum of the working-day adjustments of dayIndexes[0..i).
+    prefix: number[];
+};
+
+const overrideAdjustmentsCache = new WeakMap<BusinessCalendarDefinition, OverrideAdjustments>();
+
+// Each override day adds or removes one working day relative to the calendar's
+// weekly pattern. Sorted with prefix sums, a range count needs two binary
+// searches instead of a lookup per day.
+const overrideAdjustmentsFor = (calendar: BusinessCalendarDefinition): OverrideAdjustments => {
+    const cached = overrideAdjustmentsCache.get(calendar);
+    if (cached) return cached;
+
+    const nonWorking = new Set(calendar.nonWorkingWeekDays);
+    const entries: Array<[number, number]> = [];
+    Object.entries(calendar.days).forEach(([dateKey, day]) => {
+        const timestamp = parseDateOnly(dateKey);
+        if (timestamp === null) return;
+        const dayIndex = Math.round(timestamp / CALENDAR_DAY_MS);
+        const weeklyWorking = nonWorking.has(weekdayOfDayIndex(dayIndex)) ? 0 : 1;
+        const overrideWorking = day.type === 'working' ? 1 : 0;
+        if (overrideWorking !== weeklyWorking) entries.push([dayIndex, overrideWorking - weeklyWorking]);
+    });
+    entries.sort((left, right) => left[0] - right[0]);
+
+    const prefix = [0];
+    entries.forEach(([, delta], index) => { prefix.push(prefix[index] + delta); });
+    const adjustments = { dayIndexes: entries.map(([dayIndex]) => dayIndex), prefix };
+    overrideAdjustmentsCache.set(calendar, adjustments);
+    return adjustments;
+};
+
+const lowerBound = (values: number[], target: number): number => {
+    let low = 0;
+    let high = values.length;
+    while (low < high) {
+        const middle = (low + high) >> 1;
+        if (values[middle] < target) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+};
+
+const countWeeklyWorkingDays = (firstDay: number, lastDay: number, nonWorking: Set<number>): number => {
+    const days = lastDay - firstDay + 1;
+    const fullWeeks = Math.floor(days / 7);
+    let count = fullWeeks * (7 - nonWorking.size);
+    for (let dayIndex = firstDay + fullWeeks * 7; dayIndex <= lastDay; dayIndex += 1) {
+        if (!nonWorking.has(weekdayOfDayIndex(dayIndex))) count += 1;
+    }
+    return count;
+};
+
+// Counts the working days in the inclusive day-index range, matching
+// isWorkingDay for every day without visiting each one.
+const countWorkingDaysInRange = (firstDay: number, lastDay: number, projectId?: ProjectCalendarArgument): number => {
+    if (lastDay < firstDay) return 0;
+    if (projectId instanceof Set) return countWeeklyWorkingDays(firstDay, lastDay, projectId);
+
+    const calendarId = getCalendarIdForProject(projectId);
+    const calendar = calendarId ? configuredPayload.calendars[calendarId] : undefined;
+    if (!calendar) return countWeeklyWorkingDays(firstDay, lastDay, getNonWorkingWeekDays());
+
+    const weekly = countWeeklyWorkingDays(firstDay, lastDay, new Set(calendar.nonWorkingWeekDays));
+    const { dayIndexes, prefix } = overrideAdjustmentsFor(calendar);
+    return weekly + prefix[lowerBound(dayIndexes, lastDay + 1)] - prefix[lowerBound(dayIndexes, firstDay)];
+};
+
+const diffWorkingDaysByWalking = (from: number, to: number, projectId?: ProjectCalendarArgument): number => {
     const step = from < to ? 1 : -1;
     let current = from;
     let delta = 0;
@@ -269,4 +340,19 @@ export const diffWorkingDays = (fromTimestamp: number, toTimestamp: number, proj
         if (isWorkingDay(current, projectId)) delta += step;
     }
     return delta;
+};
+
+export const diffWorkingDays = (fromTimestamp: number, toTimestamp: number, projectId?: ProjectCalendarArgument): number => {
+    const from = timelineToCalendarDate(fromTimestamp);
+    const to = timelineToCalendarDate(toTimestamp);
+    if (from === to) return 0;
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return diffWorkingDaysByWalking(from, to, projectId);
+
+    // Walking day by day made critical-path slack over a long project cost
+    // O(tasks x days); the range count is O(log overrides) per call.
+    const fromDay = Math.round(from / CALENDAR_DAY_MS);
+    const toDay = Math.round(to / CALENDAR_DAY_MS);
+    return fromDay < toDay
+        ? countWorkingDaysInRange(fromDay + 1, toDay, projectId)
+        : 0 - countWorkingDaysInRange(toDay, fromDay - 1, projectId);
 };
