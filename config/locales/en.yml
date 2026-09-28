@@ -289,6 +289,7 @@ en:
     label_baseline_diff_none: "No baseline difference."
     label_history_compare: "Compare with issue history as of"
     label_history_apply: "Compare"
+    label_history_time: "Time (blank = end of day)"
     label_history_clear: "Stop comparing with %{date}"
     label_history_as_of: "Issue history as of %{date}"
     label_history_load_failed: "Failed to load issue history."

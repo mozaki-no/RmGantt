@@ -289,6 +289,7 @@ ja:
     label_baseline_diff_none: "ベースラインとの差分はありません。"
     label_history_compare: "チケット履歴のこの日時点と比較"
     label_history_apply: "比較"
+    label_history_time: "時刻（空欄ならその日の終わり）"
     label_history_clear: "%{date} との比較をやめる"
     label_history_as_of: "チケット履歴 %{date} 時点"
     label_history_load_failed: "チケット履歴を読み込めませんでした。"

@@ -37,6 +37,15 @@ describe('BaselineStore history comparison', () => {
         expect(useBaselineStore.getState().historyDate).toBeNull();
     });
 
+    it('passes an optional time and labels the comparison with it', async () => {
+        const fetchMock = vi.spyOn(apiClient, 'fetchHistoryBaseline').mockResolvedValue({ snapshot: snapshot('h', 'history'), warnings: [] });
+
+        await useBaselineStore.getState().loadHistory('2026-09-21', '09:30');
+
+        expect(fetchMock).toHaveBeenCalledWith('2026-09-21', '09:30');
+        expect(useBaselineStore.getState().historyDate).toBe('2026-09-21 09:30');
+    });
+
     it('keeps the previous comparison when loading history fails', async () => {
         const saved = snapshot('saved', 'filtered');
         useBaselineStore.getState().setSnapshot(saved);

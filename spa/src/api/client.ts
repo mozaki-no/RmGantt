@@ -741,7 +741,9 @@ const parseBaselineSnapshot = (value: unknown): { snapshot: BaselineSnapshot | n
                 : null,
             capturedByName: typeof capturedByNameValue === 'string' ? capturedByNameValue : null,
             scope: normalizeBaselineScope(scopeValue),
-            ...(typeof root.history_date === 'string' ? { historyDate: root.history_date } : {}),
+            ...(typeof root.history_date === 'string'
+                ? { historyDate: typeof root.history_time === 'string' ? `${root.history_date} ${root.history_time}` : root.history_date }
+                : {}),
             tasksByIssueId
         },
         warnings
@@ -977,10 +979,11 @@ export const apiClient = {
         };
     },
 
-    fetchHistoryBaseline: async (date: string): Promise<{ snapshot: BaselineSnapshot | null; warnings: string[] }> => {
+    fetchHistoryBaseline: async (date: string, time?: string): Promise<{ snapshot: BaselineSnapshot | null; warnings: string[] }> => {
         const config = getConfig();
         const query = new URLSearchParams(buildViewContextQuery(config));
         query.set('date', date);
+        if (time) query.set('time', time);
         const url = new URL(`${config.apiBase}/history_baseline.json?${query.toString()}`, window.location.origin).toString();
         const response = await sessionFetch(url, { headers: buildJsonHeaders(config) });
         if (!response.ok) {

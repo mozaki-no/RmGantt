@@ -257,8 +257,8 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
         }
     };
 
-    const handleApplyHistory = async (date: string) => {
-        const loaded = await useBaselineStore.getState().loadHistory(date);
+    const handleApplyHistory = async (date: string, time?: string) => {
+        const loaded = await useBaselineStore.getState().loadHistory(date, time);
         if (loaded) {
             useUIStore.getState().setShowBaseline(true);
             closeMenu('baselineSave');
@@ -1990,7 +1990,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     onToggleBaseline={() => toggleBaseline()}
                     historyDate={historyDate}
                     historyLoading={historyStatus === 'loading'}
-                    onApplyHistory={(date) => void handleApplyHistory(date)}
+                    onApplyHistory={(date, time) => void handleApplyHistory(date, time)}
                     onClearHistory={() => useBaselineStore.getState().clearHistory()}
                 />
                 <ActionNeededControl />

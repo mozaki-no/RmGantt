@@ -18,7 +18,7 @@ interface BaselineControlsProps {
     onToggleBaseline: () => void;
     historyDate?: string | null;
     historyLoading?: boolean;
-    onApplyHistory?: (date: string) => void;
+    onApplyHistory?: (date: string, time?: string) => void;
     onClearHistory?: () => void;
 }
 
@@ -52,7 +52,9 @@ export const BaselineControls: React.FC<BaselineControlsProps> = ({
     onApplyHistory,
     onClearHistory
 }) => {
-    const [draftHistoryDate, setDraftHistoryDate] = React.useState<string>(() => historyDate ?? defaultHistoryDate());
+    const [draftHistoryDate, setDraftHistoryDate] = React.useState<string>(() => historyDate?.slice(0, 10) ?? defaultHistoryDate());
+    // Blank time means the end of the chosen day.
+    const [draftHistoryTime, setDraftHistoryTime] = React.useState<string>(() => historyDate?.slice(11, 16) ?? '');
 
     if (!baselineEditable && !baselineViewable) return null;
 
@@ -104,7 +106,7 @@ export const BaselineControls: React.FC<BaselineControlsProps> = ({
                         boxShadow: designTokens.menuShadow,
                         padding: '8px',
                         zIndex: 20,
-                        minWidth: '240px',
+                        minWidth: '300px',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: '4px',
@@ -152,11 +154,21 @@ export const BaselineControls: React.FC<BaselineControlsProps> = ({
                                     data-testid="baseline-history-date-input"
                                     style={{ flex: 1, font: 'inherit', height: '28px' }}
                                 />
+                                <input
+                                    type="time"
+                                    value={draftHistoryTime}
+                                    onChange={(event) => setDraftHistoryTime(event.target.value)}
+                                    disabled={historyLoading}
+                                    aria-label={i18n.t('label_history_time') || 'Time (blank = end of day)'}
+                                    title={i18n.t('label_history_time') || 'Time (blank = end of day)'}
+                                    data-testid="baseline-history-time-input"
+                                    style={{ font: 'inherit', height: '28px' }}
+                                />
                                 <button
                                     type="button"
                                     data-testid="baseline-history-apply-button"
                                     disabled={historyLoading || !draftHistoryDate}
-                                    onClick={() => onApplyHistory(draftHistoryDate)}
+                                    onClick={() => onApplyHistory(draftHistoryDate, draftHistoryTime || undefined)}
                                     style={{ ...menuItemStyle, width: 'auto', border: `1px solid ${designTokens.controlBorder}` }}
                                 >
                                     {historyLoading ? '…' : (i18n.t('label_history_apply') || 'Compare')}

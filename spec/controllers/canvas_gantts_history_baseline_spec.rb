@@ -26,8 +26,8 @@ RSpec.describe CanvasGanttsController, type: :controller do
     fresh.current_journal.update_column(:created_on, at)
   end
 
-  def fetch_history(date)
-    get :history_baseline, params: { project_id: project.id, date: date, format: :json }
+  def fetch_history(date, time = nil)
+    get :history_baseline, params: { project_id: project.id, date: date, time: time, format: :json }.compact
   end
 
   it 'rebuilds dates, progress and status as of the end of the given day from the journals' do
@@ -45,6 +45,27 @@ RSpec.describe CanvasGanttsController, type: :controller do
       'baseline_done_ratio' => 30,
       'baseline_status_id' => 1
     )
+  end
+
+  it 'rebuilds the state at the given time of day when a time is passed' do
+    admin.pref.update!(time_zone: 'UTC')
+    change_issue(at: Time.utc(2026, 9, 5, 3), due_date: Date.new(2026, 9, 20))
+    change_issue(at: Time.utc(2026, 9, 5, 9), due_date: Date.new(2026, 9, 25))
+
+    fetch_history('2026-09-05', '06:30')
+
+    baseline = JSON.parse(response.body).fetch('baseline')
+    expect(baseline).to include('history_date' => '2026-09-05', 'history_time' => '06:30')
+    expect(baseline['tasks_by_issue_id'][issue.id.to_s]).to include('baseline_due_date' => '2026-09-20')
+
+    fetch_history('2026-09-05', '02:59')
+    expect(JSON.parse(response.body).dig('baseline', 'tasks_by_issue_id', issue.id.to_s, 'baseline_due_date')).to eq('2026-09-10')
+  end
+
+  it 'rejects an invalid time' do
+    fetch_history('2026-09-05', '25:00')
+
+    expect(response).to have_http_status(:unprocessable_entity)
   end
 
   it 'leaves out issues created after the given day' do

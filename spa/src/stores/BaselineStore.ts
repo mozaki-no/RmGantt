@@ -18,7 +18,7 @@ interface BaselineState {
     warnings: string[];
     lastError: string | null;
     setSnapshot: (snapshot: BaselineSnapshot | null, warnings?: string[]) => void;
-    loadHistory: (date: string) => Promise<boolean>;
+    loadHistory: (date: string, time?: string) => Promise<boolean>;
     clearHistory: () => void;
     setSaveStatus: (status: BaselineSaveStatus) => void;
     setWarnings: (warnings: string[]) => void;
@@ -49,11 +49,11 @@ export const useBaselineStore = create<BaselineState>((set, get) => ({
             saveStatus: snapshot ? 'ready' : 'idle'
         };
     }),
-    loadHistory: async (date) => {
+    loadHistory: async (date, time) => {
         const requestSeq = ++historyRequestSeq;
-        set(() => ({ historyDate: date, historyStatus: 'loading' }));
+        set(() => ({ historyDate: time ? `${date} ${time}` : date, historyStatus: 'loading' }));
         try {
-            const { snapshot } = await apiClient.fetchHistoryBaseline(date);
+            const { snapshot } = await apiClient.fetchHistoryBaseline(date, time);
             if (requestSeq !== historyRequestSeq) return false;
             if (!snapshot) throw new Error('Invalid history baseline');
             set(() => ({

@@ -187,7 +187,7 @@ To verify in a spreadsheet, create test issues with subject `=1+1`, parent subje
 - Baseline bars and diff popovers only render for tasks currently visible in the chart, even when the saved scope was the whole project.
 - Viewing baseline comparison requires `view_canvas_gantt`. Saving a baseline requires `manage_canvas_gantt_baseline`.
 - Baselines are stored in `Setting.plugin_redmine_canvas_gantt` in Redmine's settings area. Removing the plugin directory alone does not delete them; run the uninstall cleanup task first.
-- **Issue history comparison**: pick any past date in the same toolbar menu to compare with the state issues had at the end of that day, rebuilt from Redmine's issue journals. Nothing needs to be saved beforehand. It compares start date, due date, progress and status, and needs only `view_canvas_gantt`. Issues created after that day have no comparison. A change Redmine did not journal (parent values recalculated from subtasks may not be) shows the current value. Choosing "Stop comparing" returns to the saved baseline.
+- **Issue history comparison**: pick any past date, and optionally a time, in the same toolbar menu to compare with the state issues had at the end of that day (or at that time, in your Redmine time zone), rebuilt from Redmine's issue journals. Nothing needs to be saved beforehand. It compares start date, due date, progress and status, and needs only `view_canvas_gantt`. Issues created after that day have no comparison. A change Redmine did not journal (parent values recalculated from subtasks may not be) shows the current value. Choosing "Stop comparing" returns to the saved baseline.
 
 ### Workload, display settings, and export
 

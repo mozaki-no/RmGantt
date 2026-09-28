@@ -352,6 +352,7 @@ class CanvasGanttsController < ApplicationController
     label_baseline_diff_none: :label_baseline_diff_none,
     label_history_compare: :label_history_compare,
     label_history_apply: :label_history_apply,
+    label_history_time: :label_history_time,
     label_history_clear: :label_history_clear,
     label_history_as_of: :label_history_as_of,
     label_history_load_failed: :label_history_load_failed,
@@ -657,15 +658,16 @@ class CanvasGanttsController < ApplicationController
     render_internal_error(e)
   end
 
-  # GET /projects/:project_id/canvas_gantt/history_baseline.json?date=YYYY-MM-DD
-  # Rebuilds the visible issues' state at the end of the given day from the
-  # issue journals. Read-only, so view_canvas_gantt is enough.
+  # GET /projects/:project_id/canvas_gantt/history_baseline.json?date=YYYY-MM-DD[&time=HH:MM]
+  # Rebuilds the visible issues' state at the given moment (the end of the
+  # day, or the end of the given minute) from the issue journals. Read-only,
+  # so view_canvas_gantt is enough.
   def history_baseline
     raw_date = params.require(:date).to_s
     raise ArgumentError, 'Invalid history date format' unless raw_date.match?(/\A\d{4}-\d{2}-\d{2}\z/)
 
     date = Date.iso8601(raw_date)
-    at = date.in_time_zone(User.current.time_zone || Time.zone).end_of_day
+    at = history_baseline_moment(date, params[:time].to_s)
     issues = data_payload_budget.load_records(
       Issue.visible.where(project_id: descendant_project_ids)
            .select(:id, :start_date, :due_date, :done_ratio, :status_id, :created_on),
@@ -673,7 +675,7 @@ class CanvasGanttsController < ApplicationController
       limit: data_payload_budget.issue_limit
     )
     snapshot = RedmineCanvasGantt::JournalHistorySnapshotBuilder.new.build(
-      project: @project, issues: issues, at: at, date: date
+      project: @project, issues: issues, at: at, date: date, time: params[:time].presence
     )
     render body: data_payload_budget.encode_json({ baseline: snapshot }), content_type: 'application/json'
   rescue ArgumentError, ActionController::ParameterMissing => e
@@ -1072,6 +1074,16 @@ class CanvasGanttsController < ApplicationController
 
   def plugin_settings
     CANVAS_GANTT_UI_SETTINGS
+  end
+
+  def history_baseline_moment(date, raw_time)
+    day = date.in_time_zone(User.current.time_zone || Time.zone)
+    return day.end_of_day if raw_time.blank?
+
+    match = raw_time.match(/\A(\d{2}):(\d{2})\z/)
+    raise ArgumentError, 'Invalid history time format' unless match && match[1].to_i < 24 && match[2].to_i < 60
+
+    day.change(hour: match[1].to_i, min: match[2].to_i).end_of_minute
   end
 
   def baseline_repository

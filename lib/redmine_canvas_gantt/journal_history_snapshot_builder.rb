@@ -13,18 +13,19 @@ module RedmineCanvasGantt
     # issues: rows responding to id, start_date, due_date, done_ratio,
     # status_id and created_on (current values).
     # at: the moment to reconstruct (a Time).
-    def build(project:, issues:, at:, date:)
+    def build(project:, issues:, at:, date:, time: nil)
       existing = Array(issues).reject { |issue| issue.created_on && issue.created_on > at }
       values_at = past_values_by_issue_id(existing.map(&:id), at)
 
       {
-        snapshot_id: "history-#{date.iso8601}",
+        snapshot_id: ["history", date.iso8601, time].compact.join('-'),
         project_id: project.id,
         captured_at: at.utc.iso8601,
         captured_by_id: nil,
         captured_by_name: nil,
         scope: 'history',
         history_date: date.iso8601,
+        history_time: time,
         tasks_by_issue_id: existing.each_with_object({}) do |issue, result|
           result[issue.id.to_s] = task_payload(issue, values_at.fetch(issue.id, {}))
         end

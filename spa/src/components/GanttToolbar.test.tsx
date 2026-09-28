@@ -394,7 +394,7 @@ describe('GanttToolbar shortcuts', () => {
         fireEvent.click(screen.getByTestId('baseline-history-apply-button'));
 
         await waitFor(() => expect(useBaselineStore.getState().snapshot).toEqual(history));
-        expect(apiClient.fetchHistoryBaseline).toHaveBeenCalledWith('2026-09-21');
+        expect(apiClient.fetchHistoryBaseline).toHaveBeenCalledWith('2026-09-21', undefined);
         expect(useUIStore.getState().showBaseline).toBe(true);
         useBaselineStore.getState().clearHistory();
     });
