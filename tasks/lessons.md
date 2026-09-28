@@ -130,3 +130,8 @@
   starts has to dismiss that notice before it touches either tab again, and must
   wait for the revision it expects rather than read the session right after a
   concurrent action.
+- Redmine journals only changes made through `init_journal`. Parent issue
+  dates, progress and priority recalculated from subtasks
+  (`Issue#recalculate_attributes_for`) are saved without a journal, so any
+  "state at a past moment" rebuilt from journals must derive parents again
+  from their children, deepest first, following `parent_issue_*` settings.
