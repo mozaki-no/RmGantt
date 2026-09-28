@@ -47,6 +47,23 @@ describe('apiClient.fetchQueries', () => {
 });
 
 describe('apiClient.fetchData', () => {
+    it('uses canonical has_physical_children even when children are absent from the payload', async () => {
+        window.RedmineCanvasGantt = { projectId: 1, apiBase: '/projects/1/canvas_gantt', redmineBase: '', authToken: 'token' };
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ tasks: [
+                { id: 1, has_physical_children: true },
+                { id: 2, has_physical_children: false },
+                { id: 3, parent_id: 2, has_physical_children: false },
+                { id: 4 }
+            ] })
+        }));
+
+        const result = await apiClient.fetchData();
+
+        expect(result.tasks.map(task => task.hasPhysicalChildren)).toEqual([true, false, false, false]);
+    });
+
     afterEach(() => {
         vi.restoreAllMocks();
         delete window.RedmineCanvasGantt;
@@ -737,6 +754,103 @@ describe('mutation error classification', () => {
         });
     });
 
+    it('sends the date placement mode inside direct task mutations', async () => {
+        window.RedmineCanvasGantt = {
+            projectId: 1,
+            apiBase: '/projects/1/canvas_gantt',
+            redmineBase: '',
+            authToken: 'token'
+        };
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ lock_version: 4, task_id: 42 })
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        await apiClient.updateTaskFields('42', { due_date: '2027-01-02' }, undefined, 'calendar_days');
+
+        const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toEqual({
+            task: { due_date: '2027-01-02', date_placement_mode: 'calendar_days' }
+        });
+    });
+
+    it('round trips a read-only schedule resolution scope separately from the write set', async () => {
+        window.RedmineCanvasGantt = { projectId: 1, apiBase: '/projects/1/canvas_gantt', redmineBase: '', authToken: 'token' };
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({
+            status: 'ok', operation_id: 'review', entities: [{ id: 1, start_date: '2027-01-04', lock_version: 2 }], revisions: { 1: 2 },
+            resolution_context: { token: 'pinned', task_ids: [1, 2], relations: [{ id: 9, from: 1, to: 2, type: 'precedes', delay: 1 }] }
+        }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await apiClient.scheduleMutation([], 'review', { taskIds: ['1'], preview: true });
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ operation_id: 'review', changes: [], base_revisions: {},
+            resolution: { task_ids: ['1'], preview: true } });
+        expect(result.resolutionContext).toEqual({ token: 'pinned', taskIds: ['1', '2'], relations: [{ id: '9', from: '1', to: '2', type: 'precedes', delay: 1 }] });
+        await apiClient.scheduleMutation([], 'all-server', { taskIds: ['1'], token: 'pinned' });
+        expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).resolution).toEqual({ task_ids: ['1'], token: 'pinned' });
+    });
+
+    it('round trips a read-only dependent date adjustment for explicit approval', async () => {
+        window.RedmineCanvasGantt = { projectId: 1, apiBase: '/projects/1/canvas_gantt', redmineBase: '', authToken: 'token' };
+        const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({
+            status: 'validation_error', operation_id: 'apply', entities: [], revisions: {},
+            adjustments: [{ task_id: 2, before_start_date: '2027-01-06', before_due_date: '2027-01-07',
+                start_date: '2027-01-08', due_date: '2027-01-09' }]
+        }) }).mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+            status: 'ok', operation_id: 'approved', entities: [], revisions: {}
+        }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const proposed = await apiClient.scheduleMutation([], 'apply', { taskIds: ['1'], token: 'pinned' });
+        expect(proposed.adjustments).toEqual([{ taskId: '2', beforeStartDate: parseDateOnly('2027-01-06'),
+            beforeDueDate: parseDateOnly('2027-01-07'), startDate: parseDateOnly('2027-01-08'),
+            dueDate: parseDateOnly('2027-01-09') }]);
+        await apiClient.scheduleMutation([], 'approved', { taskIds: ['1'], token: 'pinned',
+            acceptedAdjustments: proposed.adjustments });
+        expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).resolution).toEqual({
+            task_ids: ['1'], token: 'pinned',
+            accepted_adjustments: [{ task_id: '2', start_date: '2027-01-08', due_date: '2027-01-09' }]
+        });
+    });
+
+    it('serializes each schedule change mode without a request-level mode', async () => {
+        window.RedmineCanvasGantt = {
+            projectId: 1,
+            apiBase: '/projects/1/canvas_gantt',
+            redmineBase: '',
+            authToken: 'token'
+        };
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'ok', operation_id: 'schedule:42', entities: [], revisions: {} })
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        await apiClient.scheduleMutation([
+            {
+                taskId: '42',
+                baseRevision: 3,
+                startDate: parseDateOnly('2027-01-02')!,
+                dueDate: parseDateOnly('2027-01-03')!,
+                datePlacementMode: 'calendar_days'
+            },
+            { taskId: '43', baseRevision: 5, startDate: parseDateOnly('2027-01-04')!, datePlacementMode: 'working_days' },
+            { taskId: '44', baseRevision: 2, dueDate: null }
+        ], 'schedule:42');
+
+        const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toEqual({
+            operation_id: 'schedule:42',
+            base_revisions: { '42': 3, '43': 5, '44': 2 },
+            changes: [
+                { task_id: '42', start_date: '2027-01-02', due_date: '2027-01-03', date_placement_mode: 'calendar_days' },
+                { task_id: '43', start_date: '2027-01-04', date_placement_mode: 'working_days' },
+                { task_id: '44', due_date: null }
+            ]
+        });
+    });
+
     it('classifies a malformed HTTP 409 as conflict without manufacturing view state', async () => {
         window.RedmineCanvasGantt = {
             projectId: 1,
@@ -782,6 +896,43 @@ describe('mutation error classification', () => {
         ], 'schedule:1');
 
         expect(result.conflict).toEqual({ taskId: '42', expectedRevision: 1, actualRevision: 2 });
+    });
+
+    it('normalizes every schedule conflict and its canonical entity from a 409 response', async () => {
+        window.RedmineCanvasGantt = {
+            projectId: 1, apiBase: '/projects/1/canvas_gantt', redmineBase: '', authToken: 'token'
+        };
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: false,
+            status: 409,
+            json: async () => ({
+                status: 'conflict', operation_id: 'schedule:multiple',
+                entities: [{ id: 42, lock_version: 2 }, { id: 44, lock_version: 3 }],
+                revisions: { 42: 2, 44: 3 },
+                conflict: { task_id: 42, expected_revision: 1, actual_revision: 2 },
+                conflicts: [
+                    { task_id: 42, expected_revision: 1, actual_revision: 2 },
+                    { taskId: '44', expectedRevision: 1, actualRevision: 3 }
+                ]
+            })
+        }));
+
+        const result = await apiClient.scheduleMutation(
+            ['42', '43', '44'].map(taskId => ({ taskId, baseRevision: 1, dueDate: 11 })),
+            'schedule:multiple'
+        );
+
+        expect(result.status).toBe('conflict');
+        expect(result.conflicts).toEqual([
+            { taskId: '42', expectedRevision: 1, actualRevision: 2 },
+            { taskId: '44', expectedRevision: 1, actualRevision: 3 }
+        ]);
+        expect(result.conflict).toEqual(result.conflicts?.[0]);
+        expect(result.entities).toEqual([
+            expect.objectContaining({ id: '42', lockVersion: 2 }),
+            expect.objectContaining({ id: '44', lockVersion: 3 })
+        ]);
+        expect(result.revisions).toEqual({ 42: 2, 44: 3 });
     });
 
     it('sends the configured business calendar revision with mutations', async () => {
@@ -832,13 +983,13 @@ describe('mutation error classification', () => {
             status: 200,
             json: async () => ({
                 status: 'ok',
-                entity: { id: 42, subject: 'Saved', lock_version: 4 }
+                entity: { id: 42, subject: 'Saved', lock_version: 4, has_physical_children: true }
             })
         }) as unknown as typeof fetch);
 
         const result = await apiClient.updateTaskFields('42', { subject: 'Saved' });
 
-        expect(result.entity).toEqual({ id: '42', subject: 'Saved', lockVersion: 4 });
+        expect(result.entity).toEqual({ id: '42', subject: 'Saved', lockVersion: 4, hasPhysicalChildren: true });
         expect(result.entity).not.toHaveProperty('editable');
         expect(result.entity).not.toHaveProperty('rowIndex');
         expect(result.entity).not.toHaveProperty('hasChildren');

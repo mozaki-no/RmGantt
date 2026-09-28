@@ -7,7 +7,7 @@ import { hasPendingRelationConsistencyChanges } from '../stores/taskStore/draftI
 import { RelationType } from '../types/constraints';
 import { useUIStore } from '../stores/UIStore';
 import { useBaselineStore } from '../stores/BaselineStore';
-import type { DraftRelation, Relation, Task } from '../types';
+import type { DraftRelation, Relation } from '../types';
 import { buildRedmineUrl } from '../utils/redmineUrl';
 import { calculateBaselineDiff, formatBaselineCapturedAt, getBaselineTaskState } from '../utils/baseline';
 import {
@@ -24,6 +24,11 @@ import { BaselineDiffPopover } from './BaselineDiffPopover';
 import { RelationEditorPopover, type RelationPopoverTarget } from './RelationEditorPopover';
 import { TaskContextMenu } from './TaskContextMenu';
 import { designTokens } from '../styles/designTokens';
+import { InlineEditService } from '../services/InlineEditService';
+import { useEditMetaStore } from '../stores/EditMetaStore';
+import type { InlineEditSettings } from '../types/editMeta';
+import { useSidebarInlineEdit } from './sidebar/useSidebarInlineEdit';
+import { filterTasksVisibleByDate, isTaskVisibleByDate } from '../utils/taskRange';
 
 const RELATION_POPOVER_OFFSET = 12;
 const PRIMARY_COLOR = designTokens.controlActiveFg;
@@ -70,6 +75,7 @@ export const HtmlOverlay: React.FC = () => {
     const draftRelation = useTaskStore(state => state.draftRelation);
     const permissions = useTaskStore(state => state.permissions);
     const setContextMenu = useTaskStore(state => state.setContextMenu);
+    const selectTask = useTaskStore(state => state.selectTask);
     const setDraftRelation = useTaskStore(state => state.setDraftRelation);
     const clearRelationSelection = useTaskStore(state => state.clearRelationSelection);
     const addRelation = useTaskStore(state => state.addRelation);
@@ -83,8 +89,13 @@ export const HtmlOverlay: React.FC = () => {
     const defaultRelationType = useUIStore(state => state.defaultRelationType);
     const autoCalculateDelay = useUIStore(state => state.autoCalculateDelay);
     const autoApplyDefaultRelation = useUIStore(state => state.autoApplyDefaultRelation);
+    const setActiveInlineEdit = useUIStore(state => state.setActiveInlineEdit);
     const showBaseline = useUIStore(state => state.showBaseline);
+    const showStartDateOnly = useUIStore(state => state.showStartDateOnly);
+    const showDueDateOnly = useUIStore(state => state.showDueDateOnly);
     const baselineSnapshot = useBaselineStore(state => state.snapshot);
+    const editMetaByTaskId = useEditMetaStore(state => state.metaByTaskId);
+    const fetchEditMeta = useEditMetaStore(state => state.fetchEditMeta);
 
     const overlayRef = React.useRef<HTMLDivElement>(null);
     const contextMenuRef = React.useRef<HTMLDivElement>(null);
@@ -94,6 +105,18 @@ export const HtmlOverlay: React.FC = () => {
     const dragDraftRef = React.useRef<typeof dragDraft>(null);
     const [menuPosition, setMenuPosition] = React.useState<{ x: number; y: number } | null>(null);
     const [relationPosition, setRelationPosition] = React.useState<{ x: number; y: number } | null>(null);
+
+    const inlineEditSettings = React.useMemo(
+        () => (window.RedmineCanvasGantt?.settings ?? {}) as InlineEditSettings,
+        []
+    );
+    const { isInlineEditEnabled, shouldEnableField } = useSidebarInlineEdit({
+        settings: inlineEditSettings,
+        editMetaByTaskId,
+        fetchEditMeta,
+        selectTask,
+        setActiveInlineEdit
+    });
 
     const taskById = React.useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
     const contextTask = contextMenu ? taskById.get(contextMenu.taskId) ?? null : null;
@@ -142,6 +165,15 @@ export const HtmlOverlay: React.FC = () => {
     const relationPopoverTarget = React.useMemo<RelationPopoverTarget | null>(() => {
         if (!activeRelation) return null;
 
+        const displaySettings = { showStartDateOnly, showDueDateOnly };
+        const fromTask = taskById.get(activeRelation.from);
+        const toTask = taskById.get(activeRelation.to);
+        if (!fromTask || !toTask ||
+            !isTaskVisibleByDate(fromTask, displaySettings) ||
+            !isTaskVisibleByDate(toTask, displaySettings)) {
+            return null;
+        }
+
         const editableView = toEditableRelationView(activeRelation);
         return {
             relation: activeRelation,
@@ -154,7 +186,7 @@ export const HtmlOverlay: React.FC = () => {
             from: getTaskLabel(editableView.fromId),
             to: getTaskLabel(editableView.toId)
         };
-    }, [activePersistedRelation, activeRelation, draftRelation, getTaskLabel]);
+    }, [activePersistedRelation, activeRelation, draftRelation, getTaskLabel, showDueDateOnly, showStartDateOnly, taskById]);
 
     const relationAnchor = React.useMemo(() => {
         if (!activeRelation) return null;
@@ -166,7 +198,11 @@ export const HtmlOverlay: React.FC = () => {
                 Math.max(0, startRow - 50),
                 Math.min(totalRows - 1, endRow + 50)
             );
-            const context = buildRelationRenderContext(bufferedTasks, viewport, zoomLevel);
+            const context = buildRelationRenderContext(
+                filterTasksVisibleByDate(bufferedTasks, { showStartDateOnly, showDueDateOnly }),
+                viewport,
+                zoomLevel
+            );
             const points = buildRelationRoutePoints(activeRelation, context, viewport);
             if (points) {
                 const midpoint = getPolylineMidpoint(points);
@@ -178,7 +214,7 @@ export const HtmlOverlay: React.FC = () => {
         }
 
         return draftRelation?.anchor ?? null;
-    }, [activeRelation, draftRelation, endRow, rowCount, startRow, tasks, viewport, zoomLevel]);
+    }, [activeRelation, draftRelation, endRow, rowCount, showDueDateOnly, showStartDateOnly, startRow, tasks, viewport, zoomLevel]);
 
     const activeBaselineTaskId = hoveredTaskId ?? selectedTaskId;
     const activeBaselineTask = React.useMemo(
@@ -227,8 +263,10 @@ export const HtmlOverlay: React.FC = () => {
         const { viewport: currentViewport, tasks: currentTasks, rowCount: currentRowCount } = useTaskStore.getState();
         const [visibleStart, visibleEnd] = LayoutEngine.getVisibleRowRange(currentViewport, currentRowCount || currentTasks.length);
         const candidates = LayoutEngine.sliceTasksInRowRange(currentTasks, visibleStart, visibleEnd);
+        const displaySettings = useUIStore.getState();
 
         for (const task of candidates) {
+            if (!isTaskVisibleByDate(task, displaySettings)) continue;
             const bounds = LayoutEngine.getTaskBounds(task, currentViewport, 'hit', zoomLevel);
             if (x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height) {
                 return task;
@@ -397,8 +435,16 @@ export const HtmlOverlay: React.FC = () => {
 
     const relatedRelations = React.useMemo(() => {
         if (!contextMenu) return [];
-        return relations.filter((relation) => relation.from === contextMenu.taskId || relation.to === contextMenu.taskId);
-    }, [contextMenu, relations]);
+        const displaySettings = { showStartDateOnly, showDueDateOnly };
+        return relations.filter((relation) => {
+            if (relation.from !== contextMenu.taskId && relation.to !== contextMenu.taskId) return false;
+            const fromTask = taskById.get(relation.from);
+            const toTask = taskById.get(relation.to);
+            return !!fromTask && !!toTask &&
+                isTaskVisibleByDate(fromTask, displaySettings) &&
+                isTaskVisibleByDate(toTask, displaySettings);
+        });
+    }, [contextMenu, relations, showDueDateOnly, showStartDateOnly, taskById]);
 
     React.useEffect(() => {
         if (!contextMenu) {
@@ -520,6 +566,18 @@ export const HtmlOverlay: React.FC = () => {
         }
     }, []);
 
+    const handleProgressChange = React.useCallback((taskId: string, value: number) => {
+        const task = useTaskStore.getState().allTasks.find((candidate) => candidate.id === taskId);
+        if (!task || task.ratioDone === value || !shouldEnableField('ratioDone', task)) return;
+
+        void InlineEditService.saveTaskFields({
+            taskId,
+            optimisticTaskUpdates: { ratioDone: value },
+            rollbackTaskUpdates: { ratioDone: task.ratioDone },
+            fields: { done_ratio: value }
+        }).catch(() => undefined);
+    }, [shouldEnableField]);
+
     const buildNewIssueUrl = React.useCallback((query?: URLSearchParams) => {
         const projectId = contextTask?.projectId || fallbackProjectId;
         const basePath = projectId ? `/projects/${projectId}/issues/new` : '/issues/new';
@@ -552,13 +610,6 @@ export const HtmlOverlay: React.FC = () => {
         useTaskStore.getState().setContextMenu(null);
     }, [canDropToRoot, moveTaskToRoot]);
 
-    const isResizableTask = React.useCallback((task: Task) => (
-        task.editable &&
-        !task.hasChildren &&
-        Number.isFinite(task.startDate) &&
-        Number.isFinite(task.dueDate)
-    ), []);
-
     return (
         <>
             <div
@@ -566,9 +617,14 @@ export const HtmlOverlay: React.FC = () => {
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
             >
                 {visibleTasks.map((task) => {
+                    if (!isTaskVisibleByDate(task, { showStartDateOnly, showDueDateOnly })) return null;
                     const isDependencyDragging = dragDraft !== null;
                     const showDependencyHandles = task.id === hoveredTaskId;
-                    const showResizeHandles = !isDependencyDragging && isResizableTask(task) && (task.id === hoveredTaskId || task.id === selectedTaskId);
+                    const canResizeStart = task.editable && !task.hasChildren && Number.isFinite(task.dueDate);
+                    const canResizeEnd = task.editable && !task.hasChildren && Number.isFinite(task.startDate);
+                    const showResizeHandles = !isDependencyDragging && (canResizeStart || canResizeEnd) && (task.id === hoveredTaskId || task.id === selectedTaskId);
+                    const showStartResizeHandle = showResizeHandles && canResizeStart;
+                    const showEndResizeHandle = showResizeHandles && canResizeEnd;
                     if (!showDependencyHandles && !showResizeHandles) return null;
 
                     const bounds = LayoutEngine.getTaskBounds(task, viewport, 'hit', zoomLevel);
@@ -613,8 +669,9 @@ export const HtmlOverlay: React.FC = () => {
                         <React.Fragment key={`handles-${task.id}`}>
                             {showResizeHandles && (
                                 <>
-                                    <div
+                                    {showStartResizeHandle && <div
                                         className="task-resize-handle"
+                                        data-task-id={task.id}
                                         data-region="start"
                                         data-testid={`task-resize-handle-start-${task.id}`}
                                         style={{ ...resizeHandleBaseStyle, left: bounds.x - resizeHandleWidth / 2 }}
@@ -623,9 +680,10 @@ export const HtmlOverlay: React.FC = () => {
                                             <span style={{ width: 1, height: 10, background: RESIZE_HANDLE_GRIP }} />
                                             <span style={{ width: 1, height: 10, background: RESIZE_HANDLE_GRIP }} />
                                         </div>
-                                    </div>
-                                    <div
+                                    </div>}
+                                    {showEndResizeHandle && <div
                                         className="task-resize-handle"
+                                        data-task-id={task.id}
                                         data-region="end"
                                         data-testid={`task-resize-handle-end-${task.id}`}
                                         style={{ ...resizeHandleBaseStyle, left: bounds.x + bounds.width - resizeHandleWidth / 2 }}
@@ -634,7 +692,7 @@ export const HtmlOverlay: React.FC = () => {
                                             <span style={{ width: 1, height: 10, background: RESIZE_HANDLE_GRIP }} />
                                             <span style={{ width: 1, height: 10, background: RESIZE_HANDLE_GRIP }} />
                                         </div>
-                                    </div>
+                                    </div>}
                                 </>
                             )}
                             {showDependencyHandles && (
@@ -744,6 +802,16 @@ export const HtmlOverlay: React.FC = () => {
                     }}
                     getTaskLabel={getTaskLabel}
                     canAddChild={!contextTask?.isContextOnly}
+                    showProgressEdit={Boolean(
+                        contextTask?.editable &&
+                        isInlineEditEnabled('inline_edit_done_ratio', true)
+                    )}
+                    canEditProgress={Boolean(
+                        contextTask &&
+                        shouldEnableField('ratioDone', contextTask)
+                    )}
+                    progressValue={contextTask?.ratioDone}
+                    onProgressChange={(value) => handleProgressChange(contextMenu.taskId, value)}
                 />
             )}
         </>

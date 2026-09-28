@@ -54,6 +54,8 @@ class CanvasGanttsController < ApplicationController
     label_group_by_assignee: :label_group_by_assignee,
     label_prev_month: :label_prev_month,
     label_next_month: :label_next_month,
+    label_action_previous_page: :label_action_previous_page,
+    label_action_next_page: :label_action_next_page,
     label_today: :label_today,
     help_desc_zoom_wheel: :help_desc_zoom_wheel,
     button_top: :button_top,
@@ -71,6 +73,18 @@ class CanvasGanttsController < ApplicationController
     label_peak: :label_peak,
     label_total: :label_total,
     label_workload: :label_workload,
+    label_workload_planned: :label_workload_planned,
+    label_workload_actual: :label_workload_actual,
+    label_workload_planned_short: :label_workload_planned_short,
+    label_workload_actual_short: :label_workload_actual_short,
+    label_workload_planned_overload: :label_workload_planned_overload,
+    label_workload_actual_overload: :label_workload_actual_overload,
+    label_workload_actual_load_failed: :label_workload_actual_load_failed,
+    label_workload_capacity: :label_workload_capacity,
+    label_workload_histogram: :label_workload_histogram,
+    label_workload_focus_overload: :label_workload_focus_overload,
+    label_workload_daily_details: :label_workload_daily_details,
+
     label_show_workload: :label_show_workload,
     label_capacity_threshold: :label_capacity_threshold,
     label_leaf_issues_only: :label_leaf_issues_only,
@@ -185,6 +199,8 @@ class CanvasGanttsController < ApplicationController
     label_refresh_failed: :label_refresh_failed,
     label_project_candidates_load_failed: :label_project_candidates_load_failed,
     label_member_projects_only: :label_member_projects_only,
+    label_project_search_placeholder: :label_project_search_placeholder,
+    label_no_matching_projects: :label_no_matching_projects,
     label_selected_projects_outside_candidates: :label_selected_projects_outside_candidates,
     label_selected_trackers_outside_candidates: :label_selected_trackers_outside_candidates,
     label_relation_add_failed: :label_relation_add_failed,
@@ -204,6 +220,10 @@ class CanvasGanttsController < ApplicationController
     label_auto_schedule_move_mode_off: :label_auto_schedule_move_mode_off,
     label_auto_schedule_move_mode_constraint_push: :label_auto_schedule_move_mode_constraint_push,
     label_auto_schedule_move_mode_linked_shift: :label_auto_schedule_move_mode_linked_shift,
+    label_manual_scheduling: :label_manual_scheduling,
+    label_date_placement: :label_date_placement,
+    label_date_placement_working_days: :label_date_placement_working_days,
+    label_date_placement_calendar_days: :label_date_placement_calendar_days,
     label_auto_schedule_external_conflict: :label_auto_schedule_external_conflict,
     label_auto_schedule_permission_denied: :label_auto_schedule_permission_denied,
     label_relation_delay_auto_calc_unavailable: :label_relation_delay_auto_calc_unavailable,
@@ -235,6 +255,61 @@ class CanvasGanttsController < ApplicationController
     label_parent_drop_conflict: :label_parent_drop_conflict,
     label_parent_drop_failed: :label_parent_drop_failed,
     label_conflict_resolution: :label_conflict_resolution,
+    label_conflict_unselected: :label_conflict_unselected,
+    label_conflict_adjustments_title: :label_conflict_adjustments_title,
+    label_conflict_adjustments_help: :label_conflict_adjustments_help,
+    button_apply_conflict_adjustments: :button_apply_conflict_adjustments,
+    label_conflict_schedule_group: :label_conflict_schedule_group,
+    label_conflict_schedule_help: :label_conflict_schedule_help,
+    label_conflict_selection_only: :label_conflict_selection_only,
+    label_conflict_review_again: :label_conflict_review_again,
+    button_apply_conflict_group: :button_apply_conflict_group,
+    button_review_conflict_group: :button_review_conflict_group,
+    button_select_remote: :button_select_remote,
+    button_select_local: :button_select_local,
+    label_conflict_intro: :label_conflict_intro,
+    label_conflict_badge: :label_conflict_badge,
+    label_conflict_use_remote_help: :label_conflict_use_remote_help,
+    label_conflict_retry_help: :label_conflict_retry_help,
+    label_conflict_field_column: :label_conflict_field_column,
+    label_conflict_local_column: :label_conflict_local_column,
+    label_conflict_server_column: :label_conflict_server_column,
+    label_conflict_changed_fields: :label_conflict_changed_fields,
+    label_conflict_retry_value: :label_conflict_retry_value,
+    label_conflict_server_value: :label_conflict_server_value,
+    label_conflict_unavailable: :label_conflict_unavailable,
+    label_conflict_empty: :label_conflict_empty,
+    label_conflict_parent_id: :label_conflict_parent_id,
+    label_action_needed: :label_action_needed,
+    label_action_constraint: :label_action_constraint,
+    label_action_overdue: :label_action_overdue,
+    label_action_missing_dates: :label_action_missing_dates,
+    label_action_unassigned: :label_action_unassigned,
+    label_action_missing_estimate: :label_action_missing_estimate,
+    label_action_other_reasons: :label_action_other_reasons,
+    label_action_loaded_scope: :label_action_loaded_scope,
+    label_action_includes_drafts: :label_action_includes_drafts,
+    label_action_unplanned_hours: :label_action_unplanned_hours,
+    label_action_unplanned_help: :label_action_unplanned_help,
+    label_action_filter: :label_action_filter,
+    label_action_load_failed: :label_action_load_failed,
+    label_action_loading: :label_action_loading,
+    label_action_planned_overload: :label_action_planned_overload,
+    label_action_overload_scope: :label_action_overload_scope,
+    label_action_threshold: :label_action_threshold,
+    label_action_open_workload: :label_action_open_workload,
+    label_action_overload_days: :label_action_overload_days,
+    label_action_leaf_only: :label_action_leaf_only,
+    label_action_include_closed: :label_action_include_closed,
+    label_action_today_onward: :label_action_today_onward,
+    label_action_focus_unavailable: :label_action_focus_unavailable,
+    label_action_search: :label_action_search,
+    label_action_no_matches: :label_action_no_matches,
+    label_action_details: :label_action_details,
+    label_action_back: :label_action_back,
+    label_action_reason_count: :label_action_reason_count,
+    label_action_open_issue: :label_action_open_issue,
+    label_action_focus_gantt: :label_action_focus_gantt,
     button_use_remote: :button_use_remote,
     button_keep_local_retry: :button_keep_local_retry,
     label_issue: :label_issue,
@@ -358,6 +433,10 @@ class CanvasGanttsController < ApplicationController
     label_timer_recording_recovery_submitting: :label_timer_recording_recovery_submitting,
     label_timer_recording_recover: :label_timer_recording_recover,
     label_timer_recording_unknown: :label_timer_recording_unknown,
+    label_timer_recording_confirmed: :label_timer_recording_confirmed,
+    label_timer_retry_sync: :label_timer_retry_sync,
+    label_timer_review_sync: :label_timer_review_sync,
+    label_timer_storage_error: :label_timer_storage_error,
     label_timer_unknown_recovery: :label_timer_unknown_recovery,
     label_timer_unknown_confirm: :label_timer_unknown_confirm,
     label_timer_mark_recorded: :label_timer_mark_recorded,
@@ -367,6 +446,7 @@ class CanvasGanttsController < ApplicationController
     button_confirm: :button_confirm,
     label_timer_running_other: :label_timer_running_other,
     label_timer_pending_other: :label_timer_pending_other,
+    label_timer_confirmed_other: :label_timer_confirmed_other,
     label_timer_view_current: :label_timer_view_current,
     label_timer_notification_title: :label_timer_notification_title,
     label_timer_notification_body_running: :label_timer_notification_body_running,
@@ -409,14 +489,19 @@ class CanvasGanttsController < ApplicationController
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'relation_change_validator').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'bulk_subtask_creator').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'parent_issue_resolver').to_s
+  require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'issue_selector').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'query_state_resolver').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'view_scope_resolver').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'baseline_task_state').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'baseline_snapshot').to_s
   require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'baseline_repository').to_s
 
+  require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'actual_workload_builder').to_s
+  require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'mutation_authorization_policy').to_s
+  require_dependency Rails.root.join('plugins', 'redmine_canvas_gantt', 'lib', 'redmine_canvas_gantt', 'issue_mutation_service').to_s
+
   helper RedmineCanvasGantt::ViteAssetHelper
-  accept_api_auth :data, :queries, :edit_meta, :edit_meta_preview, :update, :destroy_task, :bulk_create_subtasks, :create_relation, :update_relation, :destroy_relation, :save_baseline
+  accept_api_auth :actual_workload, :data, :queries, :edit_meta, :edit_meta_preview, :update, :destroy_task, :bulk_create_subtasks, :create_relation, :update_relation, :destroy_relation, :save_baseline
 
   before_action :resolve_canvas_project
   before_action :set_permissions
@@ -467,6 +552,7 @@ class CanvasGanttsController < ApplicationController
         permissions: @permissions,
         project_ids: project_ids,
         issues: resolved_query[:issues],
+        spent_hours_by_issue_id: resolved_query[:spent_hours_by_issue_id],
         relations: relations,
         filter_option_projects: bounded_data_collection(
           filter_option_projects(project_ids, member_projects_only: member_projects_only),
@@ -489,6 +575,33 @@ class CanvasGanttsController < ApplicationController
     rescue => e
       render_internal_error(e)
     end
+  end
+
+  MAX_ACTUAL_WORKLOAD_RANGE_DAYS = 730
+
+  # GET /projects/:project_id/canvas_gantt/actual_workload.json
+  def actual_workload
+    unless [params.require(:from), params.require(:to)].all? { |value| value.to_s.match?(/\A\d{4}-\d{2}-\d{2}\z/) }
+      raise ArgumentError, 'Invalid workload date format'
+    end
+    from = Date.iso8601(params.require(:from).to_s)
+    to = Date.iso8601(params.require(:to).to_s)
+    raise ArgumentError, 'Invalid workload date range' if from > to || (to - from + 1) > MAX_ACTUAL_WORKLOAD_RANGE_DAYS
+
+    resolved = query_state_resolver.resolve(project_ids: descendant_project_ids, scope_only: true)
+    # Parent Canvas access is checked by ensure_view_permission. Child issues
+    # follow the same Issue.visible scope used by the data endpoint.
+    scope = resolved[:issues]
+    scope = scope.joins(:status).where(issue_statuses: { is_closed: false }) unless params[:include_closed] == '1'
+    scope = scope.where('issues.rgt = issues.lft + 1') if params[:leaf_only] == '1'
+    entries = RedmineCanvasGantt::ActualWorkloadBuilder.build(
+      issue_scope: scope, current_user: User.current, from: from, to: to, budget: data_payload_budget
+    )
+    render body: data_payload_budget.encode_json({ entries: entries }), content_type: 'application/json'
+  rescue ArgumentError, ActionController::ParameterMissing => e
+    render json: { error: e.message }, status: :unprocessable_entity
+  rescue RedmineCanvasGantt::DataPayloadBudget::Exceeded => e
+    render_data_payload_limit(e)
   end
 
   # GET /projects/:project_id/canvas_gantt/queries.json
@@ -561,7 +674,6 @@ class CanvasGanttsController < ApplicationController
     issue = Issue.visible.find(params[:id])
     return unless ensure_issue_in_scope(issue)
     return unless ensure_issue_editable(issue)
-    previous_parent_id = issue.parent_id
 
     task_attributes = permitted_task_params
     intent = draft_task_intent.merge(task_attributes.to_h.symbolize_keys)
@@ -571,31 +683,37 @@ class CanvasGanttsController < ApplicationController
     end
     intent = preprocess_draft_intent(issue, intent)
     return if performed?
-    evaluation = issue_draft_evaluator.evaluate(issue: issue, intent: intent)
-    unless evaluation.valid?
-      return render_draft_evaluation_failure(evaluation, issue)
-    end
 
-    if issue.save
-      if requested_parent_issue_id_provided? && issue.parent_id != requested_parent_issue_id
-        render json: { errors: [canvas_gantt_l(:error_canvas_gantt_parent_linkage_failed)], parent_id: issue.parent_id }, status: :unprocessable_entity
-        return
-      end
+    result = issue_mutation_service.update(
+      issue: issue,
+      intent: intent,
+      parent_issue_id_provided: requested_parent_issue_id_provided?,
+      requested_parent_issue_id: requested_parent_issue_id
+    )
 
+    case result.status
+    when :invalid
+      render_draft_evaluation_failure(result.evaluation, issue)
+    when :save_failed
+      render json: { errors: result.errors }, status: :unprocessable_entity
+    when :parent_linkage_failed
+      render json: {
+        errors: [canvas_gantt_l(:error_canvas_gantt_parent_linkage_failed)],
+        parent_id: issue.parent_id
+      }, status: :unprocessable_entity
+    when :ok
       render json: mutation_response(
         status: 'ok',
         completeness: 'partial',
         entity: data_payload_builder.build_task_state(issue),
         revision: issue.lock_version,
-        invalidated_entity_ids: [issue.id, previous_parent_id, issue.parent_id]
+        invalidated_entity_ids: [issue.id, result.previous_parent_id, issue.parent_id]
       ).merge(
         lock_version: issue.lock_version,
         task_id: issue.id,
         parent_id: issue.parent_id,
         sibling_position: 'tail'
       )
-    else
-      render json: { errors: issue.errors.full_messages }, status: :unprocessable_entity
     end
   rescue ActiveRecord::StaleObjectError
     remote_issue = Issue.visible.find_by(id: params[:id])
@@ -626,8 +744,13 @@ class CanvasGanttsController < ApplicationController
     result = schedule_mutation_coordinator.call(
       operation_id: operation_id,
       base_revisions: params[:base_revisions] || {},
-      changes: params[:changes] || []
+      changes: params[:changes] || [],
+      resolution: params[:resolution],
+      date_placement_mode: parse_date_placement_mode(params[:date_placement_mode])
     )
+    errors = Array(result.errors).map do |error|
+      error == :invalid_dates ? canvas_gantt_l(:error_canvas_gantt_invalid_dates) : error
+    end
     response = {
       status: result.status.to_s,
       operation_id: operation_id,
@@ -635,8 +758,11 @@ class CanvasGanttsController < ApplicationController
       entities: result.entities,
       revisions: result.revisions,
       invalidated_entity_ids: result.invalidated_entity_ids,
-      **(result.errors.present? ? { errors: result.errors } : {}),
+      **(result.resolution_context ? { resolution_context: result.resolution_context } : {}),
+      **(result.adjustments ? { adjustments: result.adjustments } : {}),
+      **(errors.present? ? { errors: errors } : {}),
       **(result.conflict ? { conflict: result.conflict } : {}),
+      **(result.conflicts ? { conflicts: result.conflicts } : {}),
       **(result.failure ? { failure: result.failure } : {})
     }
     render json: response, status: {
@@ -658,12 +784,11 @@ class CanvasGanttsController < ApplicationController
     return unless ensure_issue_in_scope(issue)
     return unless ensure_issue_deletable(issue)
 
-    parent_id = issue.parent_id
-    issue.destroy
+    result = issue_mutation_service.destroy(issue: issue)
     render json: mutation_response(
       status: 'ok',
       completeness: 'partial',
-      invalidated_entity_ids: [issue.id, parent_id],
+      invalidated_entity_ids: [issue.id, result.parent_id],
       deleted_entity_ids: [issue.id]
     )
   rescue ActiveRecord::RecordNotFound
@@ -897,17 +1022,18 @@ class CanvasGanttsController < ApplicationController
   end
 
   def ensure_baseline_edit_permission
-    return true if User.current.allowed_to?(:manage_canvas_gantt_baseline, @project)
+    return true if mutation_authorization_policy.can_manage_baseline?(@project)
 
     render json: { error: canvas_gantt_l(:error_canvas_gantt_permission_denied) }, status: :forbidden
     false
   end
 
   def set_permissions
+    policy = mutation_authorization_policy
     @permissions ||= {
-      editable: User.current.allowed_to?(:edit_issues, @project),
-      viewable: User.current.allowed_to?(:view_canvas_gantt, @project),
-      baseline_editable: User.current.allowed_to?(:manage_canvas_gantt_baseline, @project)
+      editable: policy.can_edit_project?(@project),
+      viewable: policy.can_view_project?(@project),
+      baseline_editable: policy.can_manage_baseline?(@project)
     }
   end
 
@@ -981,11 +1107,11 @@ class CanvasGanttsController < ApplicationController
   def filter_option_projects(project_ids, member_projects_only: false)
     scope = if member_projects_only
               if User.current&.admin?
-                Project.visible.active
+                Project.visible.active.where(id: candidate_project_ids(project_ids))
               else
                 return [] if member_candidate_ids.empty?
 
-                Project.visible.active
+                Project.visible.active.where(id: candidate_project_ids(project_ids))
                   .joins(:members)
                   .where(members: { user_id: member_candidate_ids })
                   .distinct
@@ -1175,7 +1301,7 @@ class CanvasGanttsController < ApplicationController
   end
 
   def ensure_issue_deletable(issue)
-    return true if User.current.allowed_to?(:delete_issues, issue.project) && issue.deletable?
+    return true if mutation_authorization_policy.can_delete_issue?(issue)
 
     render json: { error: canvas_gantt_l(:error_canvas_gantt_permission_denied) }, status: :forbidden
     false
@@ -1199,6 +1325,7 @@ class CanvasGanttsController < ApplicationController
   def preprocess_draft_intent(issue, intent)
     normalized_intent = intent.to_h.symbolize_keys
     mode = normalized_intent.delete(:date_update_mode)
+    date_placement_mode = parse_date_placement_mode(normalized_intent.delete(:date_placement_mode))
     calendar_project = nil
     needs_authorized_target_context = normalized_intent.key?(:parent_issue_id) ||
                                       normalized_intent.key?(:start_date) ||
@@ -1229,13 +1356,14 @@ class CanvasGanttsController < ApplicationController
       normalized_intent,
       issue,
       project: calendar_project,
-      mode: parse_date_update_mode(mode)
+      mode: parse_date_update_mode(mode),
+      date_placement_mode: date_placement_mode
     )
 
     normalized_intent
   end
 
-  def normalize_task_date_attributes!(task_attributes, issue, project: issue.project, mode: requested_date_update_mode)
+  def normalize_task_date_attributes!(task_attributes, issue, project: issue.project, mode: requested_date_update_mode, date_placement_mode: requested_date_placement_mode)
     return true unless task_attributes.key?(:start_date) || task_attributes.key?(:due_date)
 
     start_value = task_attributes.key?(:start_date) ? task_attributes[:start_date] : issue.start_date
@@ -1245,7 +1373,8 @@ class CanvasGanttsController < ApplicationController
       due_date: due_value,
       changed_fields: task_attributes.slice(:start_date, :due_date).keys,
       project: project,
-      mode: mode
+      mode: mode,
+      date_placement_mode: date_placement_mode
     )
     unless normalized[:valid]
       render json: { errors: [canvas_gantt_l(:error_canvas_gantt_invalid_dates)] }, status: :unprocessable_entity
@@ -1265,9 +1394,17 @@ class CanvasGanttsController < ApplicationController
     parse_date_update_mode(params.dig(:task, :date_update_mode))
   end
 
+  def requested_date_placement_mode
+    parse_date_placement_mode(params.dig(:task, :date_placement_mode))
+  end
+
   def parse_date_update_mode(value)
     raw_mode = value.to_s
     %w[move resize_start resize_due direct_edit project_move legacy_unspecified].include?(raw_mode) ? raw_mode.to_sym : :legacy_unspecified
+  end
+
+  def parse_date_placement_mode(value)
+    value.to_s == 'calendar_days' ? :calendar_days : :working_days
   end
 
   def task_date_calendar_project(issue, task_attributes)
@@ -1278,7 +1415,7 @@ class CanvasGanttsController < ApplicationController
     target = Project.visible.find_by(id: target_project_id)
     return nil unless target
     return nil unless current_view_scope[:scope_project_ids].map(&:to_i).include?(target.id.to_i)
-    return nil unless User.current.allowed_to?(:add_issues, target)
+    return nil unless mutation_authorization_policy.can_add_issue?(target)
 
     target
   end
@@ -1335,7 +1472,7 @@ class CanvasGanttsController < ApplicationController
   end
 
   def issue_editable?(issue)
-    User.current.allowed_to?(:edit_issues, issue.project) && issue.editable?
+    mutation_authorization_policy.can_edit_issue?(issue)
   end
 
   def relation_non_working_week_days
@@ -1509,7 +1646,8 @@ class CanvasGanttsController < ApplicationController
     @data_payload_builder ||= RedmineCanvasGantt::DataPayloadBuilder.new(
       custom_field_extractor: custom_field_extractor,
       current_user: User.current,
-      data_payload_budget: data_payload_budget
+      data_payload_budget: data_payload_budget,
+      authorization_policy: mutation_authorization_policy
     )
   end
 
@@ -1564,7 +1702,8 @@ class CanvasGanttsController < ApplicationController
   def issue_draft_evaluator
     RedmineCanvasGantt::IssueDraftEvaluator.new(
       current_user: User.current,
-      project_scope_ids: current_view_scope[:scope_project_ids]
+      project_scope_ids: current_view_scope[:scope_project_ids],
+      authorization_policy: mutation_authorization_policy
     )
   end
 
@@ -1573,7 +1712,8 @@ class CanvasGanttsController < ApplicationController
       current_user: User.current,
       project_scope_ids: current_view_scope[:scope_project_ids],
       payload_builder: data_payload_builder,
-      calendar_resolver: business_calendar_resolver
+      calendar_resolver: business_calendar_resolver,
+      authorization_policy: mutation_authorization_policy
     )
   end
 
@@ -1621,11 +1761,26 @@ class CanvasGanttsController < ApplicationController
   end
 
   def bulk_subtask_creator
-    @bulk_subtask_creator ||= RedmineCanvasGantt::BulkSubtaskCreator.new(current_user: User.current)
+    @bulk_subtask_creator ||= RedmineCanvasGantt::BulkSubtaskCreator.new(
+      current_user: User.current,
+      authorization_policy: mutation_authorization_policy
+    )
   end
 
   def parent_issue_resolver
     @parent_issue_resolver ||= RedmineCanvasGantt::ParentIssueResolver.new
+  end
+
+  def mutation_authorization_policy
+    @mutation_authorization_policy ||= RedmineCanvasGantt::MutationAuthorizationPolicy.new(
+      current_user: User.current
+    )
+  end
+
+  def issue_mutation_service
+    @issue_mutation_service ||= RedmineCanvasGantt::IssueMutationService.new(
+      draft_evaluator: issue_draft_evaluator
+    )
   end
 
   def build_relations(issues)
@@ -1679,7 +1834,7 @@ class CanvasGanttsController < ApplicationController
     )
 
     capability_issue = evaluation&.issue || issue
-    editable = User.current.allowed_to?(:edit_issues, capability_issue.project) && capability_issue.editable?
+    editable = mutation_authorization_policy.can_edit_issue?(capability_issue)
     field_editable = build_field_editable(capability_issue, editable)
     custom_fields, custom_field_values = custom_field_extractor.extract_custom_fields(
       capability_issue,

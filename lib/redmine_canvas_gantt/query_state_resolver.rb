@@ -1,4 +1,3 @@
-require_relative 'spent_hours_preloader'
 require_relative 'lookup_association_preloader'
 
 module RedmineCanvasGantt
@@ -73,23 +72,20 @@ module RedmineCanvasGantt
     }.freeze
 
     def initialize(project:, params:, current_user:, issue_scope:, issue_includes:,
-                   data_payload_budget: nil, spent_hours_preloader: SpentHoursPreloader,
-                   lookup_association_preloader: nil)
+                   data_payload_budget: nil, lookup_association_preloader: nil)
       @project = project
       @params = params
       @current_user = current_user
       @issue_scope = issue_scope
       @issue_includes = issue_includes
       @data_payload_budget = data_payload_budget
-      @spent_hours_preloader = spent_hours_preloader
       @lookup_association_preloader = lookup_association_preloader
       @warnings = []
     end
 
-    def resolve(project_ids:)
+    def resolve(project_ids:, scope_only: false)
       state = default_state
-      selected_project_ids = resolve_selected_project_ids(project_ids)
-      state[:selected_project_ids] = selected_project_ids.map(&:to_s)
+      selected_project_ids = resolve_selected_project_ids(allowed_project_ids(project_ids))
       state[:show_subprojects] = resolve_show_subprojects
       state[:member_projects_only] = resolve_member_projects_only
 
@@ -98,23 +94,70 @@ module RedmineCanvasGantt
       state[:query_id] = query_resolution.query_id if query_resolution.query_id
 
       apply_request_overrides!(state)
+      # Keep the server-enforced project boundary after all request overrides.
+      state[:selected_project_ids] = selected_project_ids.map(&:to_s)
+      overrides = explicit_query_overrides
+      none_filters = overrides.filter_map { |field, value| field if value[:mode] == 'none' }
+      none_filters.concat(empty_saved_query_filters(query_resolution.query, overrides))
 
-      issues = load_issues(
+      selector = IssueSelector.new(
+        issue_scope: @issue_scope,
+        issue_includes: @issue_includes,
+        current_user: @current_user,
+        data_payload_budget: @data_payload_budget,
+        lookup_association_preloader: @lookup_association_preloader
+      )
+      issues = selector.call(
         query_issue_scope: query_resolution.issue_scope,
-        project_ids: project_ids,
-        selected_project_ids: selected_project_ids,
-        state: state
+        project_ids: selected_project_ids,
+        redmine_project_ids: @redmine_project_ids,
+        state: state,
+        none_filters: none_filters,
+        scope_only: scope_only
       )
 
       {
         issues: issues,
+        spent_hours_by_issue_id: selector.spent_hours_by_issue_id,
         initial_state: state,
         query_context: query_context(query_resolution),
         warnings: @warnings
       }
     end
 
+    # The URL selection is constrained once, before it reaches any Issue scope.
+    # Operation endpoints use this same boundary without applying view filters.
+    def bounded_project_ids(project_ids:)
+      allowed_ids = allowed_project_ids(project_ids)
+      raw = if @params.key?(:canvas_project_ids) || @params.key?('canvas_project_ids')
+              @params[:canvas_project_ids]
+            elsif @params.key?(:project_ids) || @params.key?('project_ids')
+              @params[:project_ids]
+            end
+      return allowed_ids if raw.nil? && !explicit_canvas_project_ids_param?
+
+      parse_project_id_list(raw) & allowed_ids
+    end
+
     private
+
+    def allowed_project_ids(project_ids)
+      Array(project_ids).map(&:to_i) & (@descendant_project_ids ||= @project.self_and_descendants.pluck(:id))
+    end
+
+    def empty_saved_query_filters(query, overrides)
+      return [] unless query
+
+      { 'status_id' => :status, 'assigned_to_id' => :assignee,
+        'project_id' => :project, 'fixed_version_id' => :version,
+        'tracker_id' => :tracker }.filter_map do |field, name|
+        next if overrides.key?(name)
+        filter = (query.filters || {})[field]
+        next unless filter.is_a?(Hash) && (filter[:operator] || filter['operator']) == '='
+        values = filter[:values] || filter['values']
+        name if Array(values).all? { |value| value.to_s.strip.empty? }
+      end
+    end
 
     def default_state
       DEFAULT_STATE.deep_dup
@@ -167,16 +210,16 @@ module RedmineCanvasGantt
         overrides[:tracker] = tracker_override_for(operator, values)
       end
 
-      if url_filter_values('status_id').present?
+      if url_filter_param?('status_id')
         overrides[:status] = subset_override(parse_integer_list(url_filter_values('status_id')))
       end
-      if url_filter_values('assigned_to_id').present?
+      if url_filter_param?('assigned_to_id')
         overrides[:assignee] = subset_override(parse_integer_or_none_list(url_filter_values('assigned_to_id')))
       end
-      if url_filter_values('fixed_version_id').present?
+      if url_filter_param?('fixed_version_id')
         overrides[:version] = subset_override(parse_version_list(url_filter_values('fixed_version_id')))
       end
-      if url_filter_values('tracker_id').present?
+      if url_filter_param?('tracker_id')
         overrides[:tracker] = subset_override(parse_integer_list(url_filter_values('tracker_id')))
       end
 
@@ -220,8 +263,7 @@ module RedmineCanvasGantt
     def project_override_for(operator, values)
       case operator
       when '='
-        parsed = parse_string_list(values)
-        parsed.empty? ? { mode: 'none' } : subset_override(parsed)
+        subset_override(parse_integer_list(values).map(&:to_s))
       when '*'
         { mode: 'all' }
       end
@@ -246,7 +288,7 @@ module RedmineCanvasGantt
     end
 
     def subset_override(values)
-      { mode: 'subset', values: values }
+      values.empty? ? { mode: 'none' } : { mode: 'subset', values: values }
     end
 
     def build_working_query(query)
@@ -278,7 +320,7 @@ module RedmineCanvasGantt
     end
 
     def query_filter_keys_to_exclude
-      keys = URL_OVERRIDE_FILTERS.select { |name| url_filter_values(name).present? }
+      keys = URL_OVERRIDE_FILTERS.select { |name| url_filter_param?(name) }
       keys.concat(supported_standard_filter_fields - ['subproject_id'])
       keys.uniq
     end
@@ -378,7 +420,6 @@ module RedmineCanvasGantt
       apply_assignee_override!(state)
       apply_version_override!(state)
       apply_tracker_override!(state)
-      apply_project_override!(state)
       apply_show_subprojects_override!(state)
       apply_member_projects_only_override!(state)
       apply_visible_columns_override!(state)
@@ -401,29 +442,22 @@ module RedmineCanvasGantt
 
     def apply_status_override!(state)
       status_ids = parse_integer_list(url_filter_values('status_id'))
-      state[:selected_status_ids] = status_ids if status_ids.present?
+      state[:selected_status_ids] = status_ids if url_filter_param?('status_id')
     end
 
     def apply_assignee_override!(state)
       assignee_ids = parse_integer_or_none_list(url_filter_values('assigned_to_id'))
-      state[:selected_assignee_ids] = assignee_ids if assignee_ids.present?
+      state[:selected_assignee_ids] = assignee_ids if url_filter_param?('assigned_to_id')
     end
 
     def apply_version_override!(state)
       version_ids = parse_version_list(url_filter_values('fixed_version_id'))
-      state[:selected_version_ids] = version_ids if version_ids.present?
+      state[:selected_version_ids] = version_ids if url_filter_param?('fixed_version_id')
     end
 
     def apply_tracker_override!(state)
       tracker_ids = parse_integer_list(url_filter_values('tracker_id'))
-      state[:selected_tracker_ids] = tracker_ids if tracker_ids.present?
-    end
-
-    def apply_project_override!(state)
-      return unless explicit_canvas_project_ids_param?
-
-      project_ids = resolve_selected_project_ids(nil)
-      state[:selected_project_ids] = project_ids.map(&:to_s)
+      state[:selected_tracker_ids] = tracker_ids if url_filter_param?('tracker_id')
     end
 
     def apply_show_subprojects_override!(state)
@@ -473,7 +507,7 @@ module RedmineCanvasGantt
         when 'assigned_to_id'
           apply_standard_assignee_filter!(state, operator, values)
         when 'project_id'
-          @redmine_project_ids = operator == '=' ? parse_string_list(values) : nil
+          @redmine_project_ids = operator == '=' ? parse_integer_list(values) : nil
         when 'fixed_version_id'
           state[:selected_version_ids] = (operator == '*' ? [] : parse_version_list(values))
         when 'tracker_id'
@@ -514,133 +548,12 @@ module RedmineCanvasGantt
                                       end
     end
 
-    def load_issues(query_issue_scope:, project_ids:, selected_project_ids:, state:)
-      scope = issues_scope_for(
-        query_issue_scope: query_issue_scope,
-        project_ids: project_ids,
-        selected_project_ids: selected_project_ids,
-        state: state
-      )
-      issues = if @data_payload_budget
-                 @data_payload_budget.load_records(
-                   scope,
-                   resource: 'issues',
-                   limit: @data_payload_budget.issue_limit
-                 )
-               else
-                 scope.to_a
-               end
-      # Both sorting by spent time and serializing the payload read
-      # Issue#spent_hours, which is a per-record SUM unless the collection is
-      # preloaded. This is where the records are loaded, so it is where the
-      # preload belongs; the serializer stays free of queries.
-      @lookup_association_preloader&.call(issues, lookup_includes)
-      @spent_hours_preloader.call(issues, @current_user)
-
-      sort_issues!(issues, state[:sort_config])
-      issues
-    end
-
-    def issues_scope_for(query_issue_scope:, project_ids:, selected_project_ids:, state:)
-      scope = @issue_scope.where(project_id: project_scope_ids(project_ids, selected_project_ids))
-      scope = scope.where(project_id: @redmine_project_ids) if @redmine_project_ids.present?
-      scope = scope.where(id: query_issue_scope) if query_issue_scope
-      scope = scope.where(status_id: state[:selected_status_ids]) if state[:selected_status_ids].present?
-      scope = apply_version_filter(scope, state[:selected_version_ids]) if state[:selected_version_ids].present?
-      scope = apply_assignee_filter(scope, state[:selected_assignee_ids]) if state[:selected_assignee_ids].present?
-      scope = scope.where(tracker_id: state[:selected_tracker_ids]) if state[:selected_tracker_ids].present?
-      # Every filter above is a plain issues column and sorting happens in Ruby,
-      # so no SQL predicate references these associations - they are read only
-      # while serializing. `includes` was free to answer that with a joined
-      # eager load, and on the bounded scope Rails chose one: a DISTINCT id
-      # query plus a very wide LEFT OUTER JOIN. `preload` asks for the separate
-      # queries explicitly. It trades three queries for eleven, but both counts
-      # are constant in the issue count, and at 10,000 issues it cut the median
-      # load from 6.115s to 2.034s and allocations by 59.6%. See
-      # docs/performance/2026-09-11-issue-load-strategy.md.
-      # With a lookup_association_preloader, plain belongs_to lookups are
-      # assigned after loading instead, which is cheaper still.
-      scope.preload(*preload_includes)
-    end
-
-    def lookup_includes
-      return [] unless @lookup_association_preloader
-
-      @lookup_association_preloader.partition(Issue, @issue_includes).first
-    end
-
-    def preload_includes
-      return @issue_includes unless @lookup_association_preloader
-
-      @lookup_association_preloader.partition(Issue, @issue_includes).last
-    end
-
-    def project_scope_ids(project_ids, selected_project_ids)
-      return selected_project_ids if explicit_canvas_project_ids_param?
-
-      selected_project_ids.presence || project_ids
-    end
-
-    def apply_assignee_filter(scope, selected_assignee_ids)
-      include_none = selected_assignee_ids.include?(nil)
-      numeric_ids = selected_assignee_ids.compact
-      return scope.where(assigned_to_id: nil) if include_none && numeric_ids.empty?
-      return scope.where(assigned_to_id: numeric_ids) unless include_none
-
-      scope.where(assigned_to_id: numeric_ids).or(scope.where(assigned_to_id: nil))
-    end
-
-    def apply_version_filter(scope, selected_version_ids)
-      include_none = selected_version_ids.include?('_none')
-      numeric_ids = selected_version_ids.filter_map { |id| Integer(id, exception: false) }
-
-      return scope.where(fixed_version_id: nil) if include_none && numeric_ids.empty?
-      return scope.where(fixed_version_id: numeric_ids) unless include_none
-
-      scope.where(fixed_version_id: numeric_ids).or(scope.where(fixed_version_id: nil))
-    end
-
-    def sort_issues!(issues, sort_config)
-      return if sort_config.blank?
-
-      issues.sort_by! do |issue|
-        value = issue_sort_value(issue, sort_config[:key])
-        [value.nil? ? 1 : 0, value]
-      end
-      issues.reverse! if sort_config[:direction] == 'desc'
-    end
-
-    def issue_sort_value(issue, key)
-      case key
-      when 'id' then issue.id
-      when 'subject' then issue.subject.to_s.downcase
-      when 'projectName' then issue.project&.name.to_s.downcase
-      when 'trackerName' then issue.tracker&.name.to_s.downcase
-      when 'statusId' then issue.status_id
-      when 'priorityId' then issue.priority_id
-      when 'assignedToName' then issue.assigned_to&.name.to_s.downcase
-      when 'authorName' then issue.author&.name.to_s.downcase
-      when 'startDate' then issue.start_date
-      when 'dueDate' then issue.due_date
-      when 'estimatedHours' then issue.estimated_hours
-      when 'ratioDone' then issue.done_ratio
-      when 'fixedVersionName' then issue.fixed_version&.name.to_s.downcase
-      when 'categoryName' then issue.category&.name.to_s.downcase
-      when 'createdOn' then issue.created_on
-      when 'updatedOn' then issue.updated_on
-      when 'spentHours' then issue.spent_hours
-      else issue.id
-      end
-    end
-
     def resolve_selected_project_ids(fallback_project_ids)
-      project_ids = parse_project_id_list(@params[:canvas_project_ids])
-      project_ids = parse_project_id_list(@params[:project_ids]) if project_ids.nil?
-      return project_ids unless project_ids.nil?
+      return bounded_project_ids(project_ids: fallback_project_ids) if explicit_canvas_project_ids_param?
 
       show_subprojects = resolve_show_subprojects
-      return [@project.id] unless show_subprojects
-      Array(fallback_project_ids || [])
+      return [@project.id] & fallback_project_ids unless show_subprojects
+      fallback_project_ids
     end
 
     def resolve_show_subprojects
@@ -676,12 +589,12 @@ module RedmineCanvasGantt
 
     def parse_project_id_list(values)
       tokens = split_list_values(values)
-      return nil if tokens.empty?
+      return [] if tokens.empty?
       return [] if tokens.all? { |value| none_marker?(value) }
 
       project_ids = tokens.reject { |value| none_marker?(value) }
                           .filter_map { |value| value.to_i if integer_string?(value) }
-      project_ids.uniq.presence
+      project_ids.uniq
     end
 
     def parse_integer_or_none_list(values)
@@ -702,10 +615,6 @@ module RedmineCanvasGantt
           parsed << value
         end
       end.uniq
-    end
-
-    def parse_string_list(values)
-      split_list_values(values).uniq
     end
 
     def parse_visible_columns(values)
@@ -755,6 +664,11 @@ module RedmineCanvasGantt
       Array(@params[name] || @params[plural] || @params["#{plural}[]"])
     end
 
+    def url_filter_param?(name)
+      plural = "#{name.to_s.sub(/_id\z/, '')}_ids"
+      [name, plural, "#{plural}[]"].any? { |key| @params.key?(key) || @params.key?(key.to_sym) }
+    end
+
     def explicit_canvas_project_ids_param?
       @params.key?(:canvas_project_ids) || @params.key?('canvas_project_ids') ||
         @params.key?(:project_ids) || @params.key?('project_ids')
@@ -765,7 +679,7 @@ module RedmineCanvasGantt
     end
 
     def integer_string?(value)
-      value.match?(/\A-?\d+\z/)
+      value.match?(/\A\d+\z/) && value.to_i.positive?
     end
 
     def none_marker?(value)

@@ -9,7 +9,6 @@ import { useBaselineStore } from '../stores/BaselineStore';
 import type { GanttExportHandle } from '../export/types';
 import { apiClient } from '../api/client';
 import { navigateToRedminePath } from '../utils/navigation';
-import { saveDisplayPreferences } from '../utils/preferences';
 import '../stores/preferencesWatcher';
 import { resetCanvasGanttTestState } from '../test/testSetup';
 import { setVisibleColumnsForTest } from '../test/columnTestHelpers';
@@ -179,113 +178,6 @@ describe('GanttToolbar shortcuts', () => {
         expect(screen.getByText('今日以降のみ')).toBeInTheDocument();
     });
 
-    it('saves shared display settings from the chart popup', () => {
-        const config = getCanvasGanttConfig();
-        window.RedmineCanvasGantt = {
-            ...config,
-            i18n: {
-                ...(config.i18n ?? {}),
-                label_share_display_settings_across_projects: '設定を全プロジェクトで共通化',
-            }
-        };
-
-        useUIStore.setState({
-            ...useUIStore.getState(),
-            showProgressLine: true,
-            showTaskTitles: false,
-            showTaskBarDates: true,
-            showHierarchyLines: false,
-            showBaseline: true,
-            showPointsOrphans: false,
-            visibleColumns: ['id', 'subject'],
-            columnSettings: setVisibleColumnsForTest(['id', 'subject']).columnSettings,
-            columnWidths: {
-                id: 72,
-                notification: 44,
-                subject: 280,
-                status: 100,
-                assignee: 80,
-                startDate: 90,
-                dueDate: 90,
-                ratioDone: 80
-            },
-            sidebarWidth: 420,
-            sidebarFontSize: 15
-        } as never);
-        useTaskStore.setState({
-            ...useTaskStore.getState(),
-            zoomLevel: 2,
-            viewMode: 'Week',
-            viewport: {
-                ...useTaskStore.getState().viewport,
-                startDate: 1_700_000_000_000,
-                scrollX: 120,
-                scrollY: 45,
-                scale: 1.25,
-                rowHeight: 44
-            },
-            showVersions: false,
-            organizeByDependency: true,
-            customScales: { 1: 1.5 },
-            autoSave: true
-        } as never);
-        saveDisplayPreferences({
-            showTaskTitles: false,
-            showProgressLine: true,
-            showTaskBarDates: true,
-            visibleColumns: ['id', 'subject']
-        }, 1);
-
-        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
-
-        fireEvent.click(screen.getByTestId('display-settings-menu-button'));
-
-        const displayMenu = screen.getByTestId('display-settings-menu');
-        expect(within(displayMenu).queryByText('現在使用中', { selector: 'span' })).not.toBeInTheDocument();
-
-        const checkbox = screen.getByLabelText('設定を全プロジェクトで共通化') as HTMLInputElement;
-        expect(checkbox.checked).toBe(false);
-
-        fireEvent.click(checkbox);
-
-        const storedPreferences = JSON.parse(window.localStorage.getItem('canvasGantt:preferences') ?? '{}') as {
-            display?: {
-                projects?: Record<string, {
-                    showProgressLine?: boolean;
-                    showTaskTitles?: boolean;
-                    showTaskBarDates?: boolean;
-                    visibleColumns?: string[];
-                    sidebarWidth?: number;
-                    autoSave?: boolean;
-                }>;
-                global?: {
-                    enabled?: boolean;
-                    preferences?: {
-                        showProgressLine?: boolean;
-                        showTaskTitles?: boolean;
-                        showTaskBarDates?: boolean;
-                        visibleColumns?: string[];
-                        sidebarWidth?: number;
-                        autoSave?: boolean;
-                    };
-                };
-            };
-        };
-
-        expect(storedPreferences.display?.global?.enabled).toBe(true);
-        expect(storedPreferences.display?.global?.preferences?.showProgressLine).toBe(true);
-        expect(storedPreferences.display?.global?.preferences?.showTaskTitles).toBe(false);
-        expect(storedPreferences.display?.global?.preferences?.autoSave).toBe(true);
-        expect(storedPreferences.display?.global?.preferences?.showTaskBarDates).toBe(true);
-        expect(storedPreferences.display?.global?.preferences?.visibleColumns).toEqual(['id', 'subject']);
-        expect(storedPreferences.display?.global?.preferences?.sidebarWidth).toBe(420);
-        expect(storedPreferences.display?.projects?.['project:1']?.showProgressLine).toBe(true);
-        expect(storedPreferences.display?.projects?.['project:1']?.showTaskTitles).toBe(false);
-        expect(storedPreferences.display?.projects?.['project:1']?.showTaskBarDates).toBe(true);
-        expect(storedPreferences.display?.projects?.['project:1']?.visibleColumns).toEqual(['id', 'subject']);
-        expect(screen.queryByTestId('display-settings-scope-menu-button')).not.toBeInTheDocument();
-    });
-
     it('renders and toggles ticket visibility in the display settings popup', () => {
         const config = getCanvasGanttConfig();
         window.RedmineCanvasGantt = {
@@ -332,34 +224,6 @@ describe('GanttToolbar shortcuts', () => {
 
         fireEvent.click(button);
         expect(useUIStore.getState().showTaskBarDates).toBe(true);
-    });
-
-    it('renders and toggles hierarchy lines in the display settings popup', () => {
-        const config = getCanvasGanttConfig();
-        window.RedmineCanvasGantt = {
-            ...config,
-            i18n: {
-                ...(config.i18n ?? {}),
-                label_toggle_hierarchy_lines: '階層線の表示切替'
-            }
-        };
-
-        useUIStore.setState({
-            ...useUIStore.getState(),
-            showHierarchyLines: true
-        } as never);
-
-        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
-
-        fireEvent.click(screen.getByTestId('display-settings-menu-button'));
-        const button = screen.getByLabelText('階層線の表示切替');
-        expect(button).toBeInTheDocument();
-
-        fireEvent.click(button);
-        expect((useUIStore.getState() as ReturnType<typeof useUIStore.getState> & { showHierarchyLines: boolean }).showHierarchyLines).toBe(false);
-
-        fireEvent.click(button);
-        expect((useUIStore.getState() as ReturnType<typeof useUIStore.getState> & { showHierarchyLines: boolean }).showHierarchyLines).toBe(true);
     });
 
     it('keeps the Today button icon-only while preserving its accessible name', () => {
@@ -462,6 +326,11 @@ describe('GanttToolbar shortcuts', () => {
         expect(screen.getAllByTestId('baseline-save-menu-button')).toHaveLength(1);
         expect(topButton.nextElementSibling).toContainElement(baselineButton);
         expect(baselineButton.querySelectorAll('svg')).toHaveLength(1);
+        const actionNeededButton = screen.getByTestId('action-needed-button');
+        expect(baselineButton.parentElement?.nextElementSibling).toBe(actionNeededButton);
+        expect(actionNeededButton).toHaveAttribute('data-load-state', 'loading');
+        expect(within(actionNeededButton).getByTestId('action-needed-indicator')).toHaveClass('action-needed-trigger-indicator-loading');
+        expect(actionNeededButton.querySelectorAll('svg')).toHaveLength(1);
 
         fireEvent.click(baselineButton);
         const baselineSaveMenu = await screen.findByTestId('baseline-save-menu');
@@ -832,45 +701,6 @@ describe('GanttToolbar shortcuts', () => {
         expect(screen.queryByText(/open in new tab/i)).not.toBeInTheDocument();
     });
 
-    it('updates row height and font size via selects in the display settings popup', () => {
-        useTaskStore.setState({
-            filterText: '',
-            allTasks: [],
-            versions: [],
-            selectedAssigneeIds: [],
-            selectedProjectIds: [],
-            selectedVersionIds: [],
-            taskStatuses: [],
-            selectedStatusIds: [],
-            modifiedTaskIds: new Set(),
-            autoSave: true,
-            viewport: {
-                ...useTaskStore.getState().viewport,
-                rowHeight: 36
-            }
-        });
-
-        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
-
-        fireEvent.click(screen.getByTestId('display-settings-menu-button'));
-        const rowHeightSelect = screen.getByTestId('display-settings-row-height-select');
-        const fontSizeSelect = screen.getByTestId('display-settings-font-size-select');
-        expect(rowHeightSelect).toHaveValue('36');
-        expect(fontSizeSelect).toHaveValue('13');
-
-        fireEvent.change(rowHeightSelect, { target: { value: '52' } });
-        expect(useTaskStore.getState().viewport.rowHeight).toBe(52);
-        expect(rowHeightSelect).toHaveValue('52');
-
-        fireEvent.change(rowHeightSelect, { target: { value: '28' } });
-        expect(useTaskStore.getState().viewport.rowHeight).toBe(28);
-        expect(rowHeightSelect).toHaveValue('28');
-
-        fireEvent.change(fontSizeSelect, { target: { value: '15' } });
-        expect(useUIStore.getState().sidebarFontSize).toBe(15);
-        expect(fontSizeSelect).toHaveValue('15');
-    });
-
     it('keeps the display sharing control in the chart popup', () => {
         const config = getCanvasGanttConfig();
         window.RedmineCanvasGantt = {
@@ -915,6 +745,16 @@ describe('GanttToolbar shortcuts', () => {
         expect(displayMenu).toBeInTheDocument();
         expect(within(displayMenu).getByLabelText('設定を全プロジェクトで共通化')).toBeInTheDocument();
         expect(screen.queryByTestId('display-settings-scope-menu-button')).not.toBeInTheDocument();
+    });
+
+    it('places manual scheduling in the general settings popup', () => {
+        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+
+        fireEvent.click(screen.getByTestId('display-settings-menu-button'));
+        expect(within(screen.getByTestId('display-settings-menu')).getByTestId('date-placement-mode-select')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByTestId('relation-settings-menu-button'));
+        expect(screen.queryByTestId('date-placement-mode-select')).not.toBeInTheDocument();
     });
 
     it('saves relation settings from toolbar menu', () => {
@@ -1047,46 +887,6 @@ describe('GanttToolbar shortcuts', () => {
         render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
 
         expect(screen.getByTitle('ヘルプ')).toBeInTheDocument();
-    });
-
-    it('groups task visibility toggles in the display settings popup', () => {
-        useTaskStore.setState({
-            filterText: '',
-            allTasks: [],
-            versions: [],
-            selectedAssigneeIds: [],
-            selectedProjectIds: [],
-            selectedVersionIds: [],
-            taskStatuses: [],
-            selectedStatusIds: [],
-            modifiedTaskIds: new Set(),
-            autoSave: true
-        });
-
-        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
-
-        fireEvent.click(screen.getByTestId('display-settings-menu-button'));
-        const startToggle = screen.getByLabelText('Start-date-only tasks');
-        const dueToggle = screen.getByLabelText('Due-date-only tasks');
-        const titleToggle = screen.getByLabelText('Ticket titles');
-        const barDateToggle = screen.getByLabelText('Task-bar dates');
-        const autoSaveToggle = screen.getByLabelText('Auto Save');
-
-        expect(startToggle).toBeInTheDocument();
-        expect(dueToggle).toBeInTheDocument();
-        expect(titleToggle).toBeInTheDocument();
-        expect(barDateToggle).toBeInTheDocument();
-        expect(autoSaveToggle).toBeInTheDocument();
-        expect(startToggle).toHaveAttribute('role', 'switch');
-        expect(titleToggle).toHaveAttribute('role', 'switch');
-        expect(autoSaveToggle).toHaveAttribute('role', 'switch');
-        expect((useUIStore.getState() as ReturnType<typeof useUIStore.getState> & { showTaskTitles: boolean }).showTaskTitles).toBe(true);
-
-        fireEvent.click(titleToggle);
-        expect((useUIStore.getState() as ReturnType<typeof useUIStore.getState> & { showTaskTitles: boolean }).showTaskTitles).toBe(false);
-
-        fireEvent.click(titleToggle);
-        expect((useUIStore.getState() as ReturnType<typeof useUIStore.getState> & { showTaskTitles: boolean }).showTaskTitles).toBe(true);
     });
 
     it('opens export menu and invokes CSV export', async () => {
@@ -1692,6 +1492,208 @@ describe('GanttToolbar shortcuts', () => {
         });
 
         expect(screen.getByLabelText('(No version)')).toBeChecked();
+    });
+
+    describe('project candidate search', () => {
+        const projects = [
+            { id: 'p1', name: 'Project Alpha' },
+            { id: 'p2', name: 'Project Beta' },
+            { id: 'p3', name: 'Redmine Canvas Gantt' },
+            { id: 'p4', name: '製造管理' },
+            { id: 'p5', name: '製造システム' },
+            { id: 'p6', name: '営業システム' }
+        ];
+        const response = (candidates = projects) => ({
+            tasks: [], relations: [], versions: [], statuses: [], customFields: [],
+            filterOptions: { projects: candidates, assignees: [] },
+            project: { id: '1', name: 'Project' },
+            permissions: { editable: true, viewable: true, baselineEditable: true }
+        });
+        const openProjects = () => {
+            fireEvent.click(screen.getByTestId('project-filter-menu-button'));
+            return screen.getByRole('searchbox');
+        };
+        const search = (value: string) => fireEvent.change(screen.getByRole('searchbox'), { target: { value } });
+
+        beforeEach(() => {
+            useTaskStore.setState({
+                filterOptions: { projects, assignees: [] },
+                selectedProjectIds: [], memberProjectsOnly: false, groupByProject: false
+            });
+            vi.mocked(apiClient.fetchData).mockResolvedValue(response());
+        });
+
+        it.each(['canvas', 'CANVAS', '  canvas  '])('matches project names with %j', (query) => {
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search(query);
+            expect(screen.getByLabelText('Redmine Canvas Gantt')).toBeInTheDocument();
+            projects.filter(({ id }) => id !== 'p3').forEach(({ name }) => {
+                expect(screen.queryByLabelText(name)).not.toBeInTheDocument();
+            });
+        });
+
+        it('matches Japanese names and restores all candidates for whitespace-only input', () => {
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('製造');
+            expect(screen.getByLabelText('製造管理')).toBeInTheDocument();
+            expect(screen.getByLabelText('製造システム')).toBeInTheDocument();
+            expect(screen.queryByLabelText('営業システム')).not.toBeInTheDocument();
+            expect(screen.queryByLabelText('Project Alpha')).not.toBeInTheDocument();
+            search('   ');
+            projects.forEach(({ name }) => expect(screen.getByLabelText(name)).toBeInTheDocument());
+        });
+
+        it('preserves hidden selections and adds a matching project through the existing store action', async () => {
+            useTaskStore.setState({ selectedProjectIds: ['p1', 'p2'] });
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('canvas');
+            expect(useTaskStore.getState().selectedProjectIds).toEqual(['p1', 'p2']);
+            fireEvent.click(screen.getByLabelText('Redmine Canvas Gantt'));
+            await waitFor(() => expect(apiClient.fetchData).toHaveBeenCalledTimes(1));
+            expect(useTaskStore.getState().selectedProjectIds).toEqual(['p1', 'p2', 'p3']);
+            expect(screen.getByRole('searchbox')).toHaveValue('canvas');
+            search('');
+            ['Project Alpha', 'Project Beta', 'Redmine Canvas Gantt'].forEach((name) => {
+                expect(screen.getByLabelText(name)).toBeChecked();
+            });
+        });
+
+        it('uses all official candidates for Select All, including when there are no matches', async () => {
+            useTaskStore.setState({ selectedProjectIds: ['p3'] });
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('canvas');
+            expect(screen.getByLabelText('Select All')).not.toBeChecked();
+            fireEvent.click(screen.getByLabelText('Select All'));
+            await waitFor(() => expect(apiClient.fetchData).toHaveBeenCalledTimes(1));
+            expect(useTaskStore.getState().selectedProjectIds).toEqual(expect.arrayContaining(projects.map(({ id }) => id)));
+            expect(useTaskStore.getState().selectedProjectIds).toHaveLength(projects.length);
+            expect(screen.getByLabelText('Select All')).toBeChecked();
+            search('no match');
+            expect(screen.getByLabelText('Select All')).toBeChecked();
+            fireEvent.click(screen.getByLabelText('Select All'));
+            await waitFor(() => expect(apiClient.fetchData).toHaveBeenCalledTimes(2));
+            expect(useTaskStore.getState().selectedProjectIds).toEqual([]);
+        });
+
+        it('bases the outside-candidate warning on official candidates, not search matches', () => {
+            useTaskStore.setState({ selectedProjectIds: ['p1'], memberProjectsOnly: true });
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('canvas');
+            expect(screen.queryByText(/Some selected projects are hidden/)).not.toBeInTheDocument();
+            act(() => useTaskStore.setState({ selectedProjectIds: ['outside'] }));
+            expect(screen.getByText(/Some selected projects are hidden/)).toBeInTheDocument();
+        });
+
+        it('reapplies search to refreshed member candidates and prioritizes loading', async () => {
+            let resolve!: (value: ReturnType<typeof response>) => void;
+            vi.mocked(apiClient.fetchData).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('canvas');
+            fireEvent.click(screen.getByLabelText('Show member projects in filter'));
+            expect(screen.getByText('Loading...')).toBeInTheDocument();
+            expect(screen.queryByText('No matching projects')).not.toBeInTheDocument();
+            expect(screen.queryByLabelText('Redmine Canvas Gantt')).not.toBeInTheDocument();
+            await act(async () => resolve(response([
+                { id: 'p7', name: 'Canvas Member' }, projects[0]
+            ])));
+            expect(screen.getByRole('searchbox')).toHaveValue('canvas');
+            expect(screen.getByLabelText('Canvas Member')).toBeInTheDocument();
+            expect(screen.queryByLabelText('Project Alpha')).not.toBeInTheDocument();
+            expect(screen.queryByLabelText('Redmine Canvas Gantt')).not.toBeInTheDocument();
+            expect(apiClient.fetchData).toHaveBeenCalledWith(expect.objectContaining({
+                query: expect.objectContaining({ memberProjectsOnly: true })
+            }));
+        });
+
+        it('keeps load errors visible instead of showing no matches', async () => {
+            vi.mocked(apiClient.fetchData).mockRejectedValueOnce(new Error('Candidates unavailable'));
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('no match');
+            expect(screen.getByText('No matching projects')).toBeInTheDocument();
+            fireEvent.click(screen.getByLabelText('Show member projects in filter'));
+            expect(await screen.findByText('Candidates unavailable')).toBeInTheDocument();
+            expect(screen.queryByText('No matching projects')).not.toBeInTheDocument();
+            search('still no match');
+            expect(screen.getByText('Candidates unavailable')).toBeInTheDocument();
+            expect(screen.queryByText('No matching projects')).not.toBeInTheDocument();
+        });
+
+        it('keeps Clear and grouping independent of search and preserves the active indicator', async () => {
+            useTaskStore.setState({ selectedProjectIds: ['p1', 'p2'] });
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            const button = screen.getByTestId('project-filter-menu-button');
+            openProjects();
+            search('canvas');
+            fireEvent.click(screen.getByText('Clear'));
+            await waitFor(() => expect(apiClient.fetchData).toHaveBeenCalledTimes(1));
+            expect(useTaskStore.getState().selectedProjectIds).toEqual([]);
+            expect(button.querySelector('div')).toBeNull();
+            fireEvent.click(screen.getByLabelText('Group by project'));
+            expect(useTaskStore.getState().groupByProject).toBe(true);
+            expect(button.querySelector('div')).not.toBeNull();
+            fireEvent.click(screen.getByLabelText('Group by project'));
+            expect(useTaskStore.getState().groupByProject).toBe(false);
+            expect(button.querySelector('div')).toBeNull();
+            expect(screen.getByRole('searchbox')).toHaveValue('canvas');
+        });
+
+        it.each(['toggle', 'outside', 'other menu'])('resets search when closed by %s', (closeBy) => {
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            search('canvas');
+            if (closeBy === 'toggle') fireEvent.click(screen.getByTestId('project-filter-menu-button'));
+            if (closeBy === 'outside') fireEvent.mouseDown(document.body);
+            if (closeBy === 'other menu') fireEvent.click(screen.getByTestId('tracker-filter-menu-button'));
+            expect(screen.queryByTestId('project-menu')).not.toBeInTheDocument();
+            expect(openProjects()).toHaveValue('');
+            projects.forEach(({ name }) => expect(screen.getByLabelText(name)).toBeInTheDocument());
+        });
+
+        it('does not change saved-query state, URL, storage or API calls while searching', async () => {
+            useTaskStore.getState().applyResolvedQueryState({ queryId: 12, selectedProjectIds: ['p1', 'p2'] });
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            const stateBefore = useTaskStore.getState();
+            const urlBefore = window.location.href;
+            const storageBefore = { ...window.localStorage };
+            openProjects();
+            await act(async () => search('canvas'));
+            expect(useTaskStore.getState()).toBe(stateBefore);
+            expect(useTaskStore.getState().activeQueryId).toBe(12);
+            expect(useTaskStore.getState().selectedProjectIds).toEqual(['p1', 'p2']);
+            expect(window.location.href).toBe(urlBefore);
+            expect({ ...window.localStorage }).toEqual(storageBefore);
+            expect(apiClient.fetchData).not.toHaveBeenCalled();
+            expect(apiClient.fetchQueries).not.toHaveBeenCalled();
+        });
+
+        it('renders localized search and empty-state text with controls outside the candidate list', () => {
+            getCanvasGanttConfig().i18n = {
+                label_project_search_placeholder: 'プロジェクトを検索',
+                label_no_matching_projects: '一致するプロジェクトがありません'
+            };
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+            openProjects();
+            const input = screen.getByRole('searchbox', { name: 'プロジェクトを検索' });
+            expect(input).toHaveAttribute('placeholder', 'プロジェクトを検索');
+            const menu = screen.getByTestId('project-menu');
+            const list = menu.querySelector('.gantt-toolbar-project-candidate-list');
+            expect(list).toContainElement(screen.getByLabelText('Project Alpha'));
+            [input, screen.getByLabelText('Select All'), screen.getByLabelText('Show member projects in filter'),
+                screen.getByLabelText('Group by project'), screen.getByText('Clear')].forEach((control) => {
+                expect(list).not.toContainElement(control);
+                expect(menu).toContainElement(control);
+            });
+            expect(menu.style.overflowY).toBe('');
+            search('no match');
+            expect(screen.getByText('一致するプロジェクトがありません')).toBeInTheDocument();
+        });
     });
 
     it('keeps all descendant projects visible in the project filter menu after a project is selected', () => {

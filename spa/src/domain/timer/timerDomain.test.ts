@@ -12,6 +12,7 @@ import {
     cancelTimerRecording,
     recoverTimerRecording,
     completeTimerRecording,
+    cleanupConfirmedTimerRecording,
     resolveUnknownTimerRecording,
     extendTimerSession,
     stopTimerSession,
@@ -20,8 +21,7 @@ import {
     formatTimerDuration,
     formatTimerDurationHoursMinutes,
     formatElapsedMinutesText,
-    formatTimerExtensionLabel,
-    isTimerSpanningMultipleDays
+    formatTimerExtensionLabel
 } from './timerDomain';
 import type { TimerSession } from '../../types/timer';
 
@@ -239,7 +239,27 @@ describe('Timer Domain Logic', () => {
         expect(markTimerRecordingValidationError(submitting!, 'attempt-1')?.recordingAttempt?.phase).toBe('editing');
         expect(markTimerRecordingUnknown(submitting!, 'attempt-1')?.recordingAttempt?.phase).toBe('unknown');
         expect(cancelTimerRecording(reserved!, 'attempt-1')?.recordingAttempt).toBeUndefined();
-        expect(completeTimerRecording(submitting!, 'attempt-1')).toBeNull();
+        const confirmed = completeTimerRecording(submitting!, 'attempt-1', baseTime + 14 * 60 * 1000)!;
+        expect(confirmed.recordingAttempt?.phase).toBe('confirmed');
+        expect(confirmed.updatedAt).toBe(baseTime + 14 * 60 * 1000);
+        expect(completeTimerRecording(confirmed, 'attempt-1')).toBe(confirmed);
+        expect(cleanupConfirmedTimerRecording(confirmed, 'attempt-1')).toBeNull();
+        expect(recoverTimerRecording(confirmed, 'attempt-1')).toBeUndefined();
+        expect(cancelTimerRecording(confirmed, 'attempt-1')).toBeUndefined();
+    });
+
+    it('treats validation synchronization retry from editing as already satisfied', () => {
+        const pending = stopTimerSession(createTimerSession({
+            issueId: 123,
+            subject: 'Task',
+            minutes: 30,
+            autoStop: false,
+            now: baseTime
+        }), baseTime + 10 * 60 * 1000);
+        const editing = beginTimerRecording(pending, 'tab-1', 'attempt-1', baseTime + 11 * 60 * 1000)!;
+
+        expect(markTimerRecordingValidationError(editing, 'attempt-1')).toBe(editing);
+        expect(markTimerRecordingValidationError(editing, 'stale-attempt')).toBeUndefined();
     });
 
     it('requires explicit resolution for an unknown recording outcome', () => {
@@ -352,33 +372,4 @@ describe('Timer Domain Logic', () => {
         expect(formatElapsedMinutesText(45 * 60 * 1000, true)).toBe('45分');
     });
 
-    it('detects when timer segments span multiple days', () => {
-        const sameDaySession: TimerSession = {
-            version: 4,
-            sessionId: 's1',
-            revision: 1,
-            issueId: 1,
-            subject: 'Test',
-            autoStop: false,
-            state: 'stopped_pending_record',
-            createdAt: baseTime,
-            updatedAt: baseTime,
-            segments: [{ startedAt: baseTime, stoppedAt: baseTime + 30 * 60 * 1000 }]
-        };
-        expect(isTimerSpanningMultipleDays(sameDaySession)).toBe(false);
-
-        const crossDaySession: TimerSession = {
-            version: 4,
-            sessionId: 's1',
-            revision: 1,
-            issueId: 1,
-            subject: 'Test',
-            autoStop: false,
-            state: 'stopped_pending_record',
-            createdAt: baseTime,
-            updatedAt: baseTime,
-            segments: [{ startedAt: baseTime, stoppedAt: baseTime + 28 * 3600 * 1000 }]
-        };
-        expect(isTimerSpanningMultipleDays(crossDaySession)).toBe(true);
-    });
 });

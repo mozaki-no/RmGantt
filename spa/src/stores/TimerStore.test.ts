@@ -75,6 +75,37 @@ describe('TimerStore', () => {
         expect(useUIStore.getState().notifications).toHaveLength(1);
     });
 
+    it.each([
+        ['malformed JSON', '{invalid-json:'],
+        ['unsupported session version', JSON.stringify({ version: 99 })]
+    ])('keeps the start dialog open and preserves %s when stored timer data cannot be read', async (_name, raw) => {
+        const key = getTimerStorageKeys().session;
+        window.localStorage.setItem(key, raw);
+        useTimerStore.setState({ startDialogTask: mockTask, isReady: true });
+
+        const started = await useTimerStore.getState().startTimer(mockTask, 30);
+
+        expect(started).toBe(false);
+        expect(useTimerStore.getState().session).toBeNull();
+        expect(useTimerStore.getState().startDialogTask).toEqual(mockTask);
+        expect(window.localStorage.getItem(key)).toBe(raw);
+        expect(useUIStore.getState().notifications).toHaveLength(1);
+        expect(useUIStore.getState().notifications[0]).toMatchObject({
+            type: 'error',
+            message: 'Stored timer data could not be read. Existing data was preserved.'
+        });
+    });
+
+    it('starts a timer normally when no stored session exists', async () => {
+        useTimerStore.setState({ startDialogTask: mockTask, isReady: true });
+
+        const started = await useTimerStore.getState().startTimer(mockTask, 30);
+
+        expect(started).toBe(true);
+        expect(useTimerStore.getState().startDialogTask).toBeNull();
+        expect(useTimerStore.getState().session?.state).toBe('running');
+    });
+
     it('prevents starting a second timer while another issue is running', async () => {
         await useTimerStore.getState().startTimer(mockTask, 30);
 
@@ -185,6 +216,33 @@ describe('TimerStore', () => {
         expect(window.localStorage.getItem(getTimerStorageKeys().session)).toBeNull();
     });
 
+    it('keeps confirmed state when cleanup fails and retries cleanup without another recording attempt', async () => {
+        await useTimerStore.getState().startTimer(mockTask, 30);
+        await useTimerStore.getState().stopTimer();
+        const pending = useTimerStore.getState().session!;
+        const context = {
+            origin: 'timer' as const,
+            sessionId: pending.sessionId,
+            issueId: pending.issueId,
+            attemptId: pending.recordingAttempt!.id,
+            ownerTabId: pending.recordingAttempt!.ownerTabId
+        };
+        await useTimerStore.getState().beginTimerRecordingSubmission(context);
+
+        const originalRemove = Storage.prototype.removeItem;
+        const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+            if (key === getTimerStorageKeys().session) throw new Error('cleanup denied');
+            originalRemove.call(this, key);
+        });
+
+        await useTimerStore.getState().completeTimerRecording(context);
+        expect(useTimerStore.getState().session?.recordingAttempt?.phase).toBe('confirmed');
+        remove.mockRestore();
+
+        await useTimerStore.getState().completeTimerRecording(context);
+        expect(useTimerStore.getState().session).toBeNull();
+    });
+
     it('does not clear a running session or a pending session owned by another recording attempt', async () => {
         await useTimerStore.getState().startTimer(mockTask, 30);
         const running = useTimerStore.getState().session!;
@@ -278,7 +336,7 @@ describe('TimerStore', () => {
     });
 
     it('preserves recording reservations during startup regardless of owner and phase', async () => {
-        const makePending = (ownerTabId: string, phase: 'editing' | 'submitting' | 'unknown') => {
+        const makePending = (ownerTabId: string, phase: 'editing' | 'submitting' | 'confirmed' | 'unknown') => {
             const startedAt = Date.now() - 30 * 60 * 1000;
             return {
                 version: 4,
@@ -305,6 +363,7 @@ describe('TimerStore', () => {
             { name: 'current submitting', ownerTabId: 'test-tab', phase: 'submitting' as const },
             { name: 'other editing', ownerTabId: 'other-tab', phase: 'editing' as const },
             { name: 'other submitting', ownerTabId: 'other-tab', phase: 'submitting' as const },
+            { name: 'confirmed cleanup pending', ownerTabId: 'other-tab', phase: 'confirmed' as const },
             { name: 'unknown outcome', ownerTabId: 'test-tab', phase: 'unknown' as const }
         ];
 
@@ -319,6 +378,33 @@ describe('TimerStore', () => {
             expect(reconciled?.recordingAttempt?.phase, testCase.name).toBe(testCase.phase);
             expect(reconciled?.revision, testCase.name).toBe(1);
         }
+    });
+
+    it('keeps the in-memory confirmed session when a later storage read fails', () => {
+        const confirmed = {
+            version: 4,
+            sessionId: 'confirmed-storage-error',
+            revision: 2,
+            issueId: 123,
+            subject: 'Confirmed task',
+            autoStop: false,
+            state: 'stopped_pending_record' as const,
+            recordingAttempt: {
+                id: 'confirmed-attempt',
+                ownerTabId: 'other-tab',
+                openedAt: Date.now(),
+                phase: 'confirmed' as const
+            },
+            segments: [{ startedAt: Date.now() - 30 * 60 * 1000, stoppedAt: Date.now() }],
+            createdAt: Date.now() - 30 * 60 * 1000,
+            updatedAt: Date.now()
+        };
+        useTimerStore.setState({ session: confirmed, isReady: true });
+        window.localStorage.setItem(getTimerStorageKeys().session, '{corrupt');
+
+        useTimerStore.getState().syncFromStorage();
+
+        expect(useTimerStore.getState().session?.recordingAttempt?.phase).toBe('confirmed');
     });
 
     it('recovers an editing or submitting reservation explicitly regardless of owner identity', async () => {

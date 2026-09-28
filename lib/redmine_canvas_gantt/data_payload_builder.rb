@@ -1,20 +1,22 @@
 require 'set'
-
+require_relative 'mutation_authorization_policy'
+require_relative 'spent_hours_batch'
 require_relative 'version_progress_preloader'
 
 module RedmineCanvasGantt
   class DataPayloadBuilder
     def initialize(custom_field_extractor:, current_user:, data_payload_budget: nil,
-                   version_progress_preloader: VersionProgressPreloader)
+                   version_progress_preloader: VersionProgressPreloader, authorization_policy: nil)
       @custom_field_extractor = custom_field_extractor
       @current_user = current_user
       @data_payload_budget = data_payload_budget
       @version_progress_preloader = version_progress_preloader
+      @authorization_policy = authorization_policy || MutationAuthorizationPolicy.new(current_user: current_user)
     end
 
-    def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_assignees:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil)
+    def build(project:, permissions:, project_ids:, issues:, filter_option_projects:, filter_option_assignees:, filter_option_trackers: nil, initial_state: nil, query_context: nil, warnings: [], baseline: nil, business_calendar: nil, relations: nil, spent_hours_by_issue_id: nil)
       {
-        tasks: build_tasks(issues),
+        tasks: build_tasks(issues, spent_hours_by_issue_id: spent_hours_by_issue_id),
         custom_fields: @custom_field_extractor.build_project_custom_fields(project_ids, issues),
         relations: relations ? build_relations_from(relations) : build_relations(issues),
         versions: build_versions(project_ids),
@@ -34,38 +36,45 @@ module RedmineCanvasGantt
       }.compact
     end
 
-    # Serialization stays free of queries: Issue#spent_hours is preloaded by
-    # QueryStateResolver when the collection is loaded, so reading it here is
-    # an attribute read rather than a per-record SUM.
-    def build_tasks(issues)
+    # Serialization stays free of per-issue queries: spent time is summed for
+    # the whole collection in one grouped query (or handed in by the
+    # IssueSelector when it already summed it to sort by spent time).
+    def build_tasks(issues, spent_hours_by_issue_id: nil)
       can_log_time_by_project_id = {}
       can_edit_issues_by_project_id = {}
+      spent_hours_by_issue_id ||= SpentHoursBatch.for(issues, current_user: @current_user)
 
       issues.each_with_index.map do |issue, idx|
-        # allowed_to?(:edit_issues) only depends on the project, so it is
+        # The :edit_issues permission only depends on the project, so it is
         # memoized; Issue#editable? stays per-issue because workflow rules can
-        # differ.  A project without :edit_issues can never make editable? the
-        # deciding factor here, so the short circuit preserves the result.
+        # differ.  This is MutationAuthorizationPolicy#can_edit_issue? split so
+        # the project half is evaluated once per project.
         can_edit_project = can_edit_issues_by_project_id.fetch(issue.project_id) do
-          can_edit_issues_by_project_id[issue.project_id] = @current_user.allowed_to?(:edit_issues, issue.project)
+          can_edit_issues_by_project_id[issue.project_id] = @authorization_policy.can_edit_project?(issue.project)
         end
 
         # Adding the collection keys to the fresh entity hash keeps the key
         # order a merge would give without copying 30 keys per issue.
-        task = build_task_state(issue)
+        task = build_task_state(issue, spent_hours: spent_hours_by_issue_id.fetch(issue.id, 0.0))
         task[:display_order] = idx
         task[:editable] = can_edit_project && issue.editable?
         task[:can_log_time] = can_log_time_by_project_id.fetch(issue.project_id) do
-          can_log_time_by_project_id[issue.project_id] = @current_user.allowed_to?(:log_time, issue.project)
+          can_log_time_by_project_id[issue.project_id] = @authorization_policy.can_log_time?(issue.project)
         end
         task
       end
     end
 
+    def build_task_states(issues)
+      hours = SpentHoursBatch.for(issues, current_user: @current_user)
+      issues.map { |issue| build_task_state(issue, spent_hours: hours.fetch(issue.id, 0.0)) }
+    end
+
     # Mutation responses must describe the persisted Issue only.  In
     # particular, display_order and other collection/layout values belong to
     # the current query and are not canonical entity state.
-    def build_task_state(issue)
+    def build_task_state(issue, spent_hours: nil)
+      spent_hours = SpentHoursBatch.for([issue], current_user: @current_user).fetch(issue.id, 0.0) if spent_hours.nil?
       {
           id: issue.id,
           subject: issue.subject,
@@ -79,6 +88,7 @@ module RedmineCanvasGantt
           assigned_to_id: issue.assigned_to_id,
           assigned_to_name: principal_name(issue.assigned_to_id) { issue.assigned_to },
           parent_id: issue.parent_id,
+          has_physical_children: issue.rgt > issue.lft + 1,
           lock_version: issue.lock_version,
           tracker_id: issue.tracker_id,
           tracker_name: issue.tracker&.name,
@@ -93,7 +103,7 @@ module RedmineCanvasGantt
           estimated_hours: issue.estimated_hours,
           created_on: issue.created_on,
           updated_on: issue.updated_on,
-          spent_hours: issue.spent_hours,
+          spent_hours: spent_hours,
           fixed_version_name: issue.fixed_version&.name,
           custom_field_values: @custom_field_extractor.build_task_custom_field_values(issue)
       }

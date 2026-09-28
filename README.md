@@ -55,6 +55,12 @@ Baseline snapshots are stored in Redmine's plugin settings (`Setting.plugin_redm
 - Display settings stored per project or shared across all projects in the same browser profile (not across Redmine users)
 - Version headers, progress line, hierarchy lines, orphan date points, task titles, and dependency-based organization
 
+Date changes in a batch are saved atomically. If another request has updated any of the issues, the entire batch is cancelled and every local draft is retained. The conflict panel lists all issues with revision conflicts; issues whose save was only cancelled with the batch remain unsaved without being marked as conflicts.
+
+Canvas Gantt requires `view_canvas_gantt` on the opened project. Descendant issues follow Redmine's issue visibility rules; the child project does not need its own Canvas Gantt permission. Issue spent hours, spent-hours sorting, mutation responses, and actual workload include only time entries visible to the current user. These totals can differ from Redmine's `Issue#spent_hours`. The "member projects only" filter lists visible active member projects within the opened project and its descendants (all visible active projects in that tree for administrators); URL selections outside the tree cannot expand the issue scope.
+
+For date conflicts, row buttons only select the server version or local dates. **Apply this group** validates and commits the original schedule operation together with its dependencies and hierarchy. Inconsistent combinations are blocked. The server also checks the final Redmine callback result and rolls back if it changes a selected date. If Redmine would adjust dates, the panel lists every affected issue, including dependencies without a conflict card, and requires **Accept adjusted dates and apply** before retrying. The retry succeeds only if the actual final dates match the approved adjustment. Changes to reviewed revisions, relations, delays, hierarchy or calendars require **Refresh comparison and reselect**. Failed applications preserve choices and drafts. Local choices apply only the reviewed date intent; later edits, other fields and unrelated drafts remain unsaved. Automatic and manual saving use the same resolution flow.
+
 ## Demo
 
 ![Canvas Gantt Demo](./docs/demo.gif)
@@ -160,6 +166,10 @@ The cleanup task deletes the `plugin_redmine_canvas_gantt` row from Redmine's `s
    - Export the current view as PNG or CSV when the layout supports it.
    - Toggle full screen for more workspace when needed.
 
+CSV is intended for people opening it in spreadsheet applications. For untrusted text beginning with a formula marker (`=`, `+`, `-`, `@`, including full-width forms), a tab, or a line break, the export adds a leading tab inside a quoted CSV cell; it also checks past leading spaces and BOM. Numeric task columns remain numeric. This follows the [OWASP CSV Injection guidance](https://owasp.org/www-community/attacks/CSV_Injection) for Excel-oriented viewing. The tab becomes part of the cell data and can affect programmatic imports. A single-quote prefix may be removed when Excel saves and reopens CSV, so it is not used here. Spreadsheet behavior varies; this export cannot guarantee safety in every spreadsheet or import path.
+
+To verify in a spreadsheet, create test issues with subject `=1+1`, parent subject `+1+1`, custom field name `＠SUM(1)`, and custom field value `  -1+1`. Include a value with a quote, comma, and lone carriage return. Export CSV; inspect that dangerous text begins with a tab inside a quoted cell and that embedded quotes are doubled. Open it in the target Excel or Calc version, confirm that all values remain text and cells and rows stay intact, then save and reopen it to check again. Repeat for each supported import route. The automated serializer tests do not perform this spreadsheet check.
+
 ### Work Timer
 
 - Enable the **Work Timer** column from column settings. It is hidden by default and does not become a Redmine query column.
@@ -168,8 +178,6 @@ The cleanup task deletes the `plugin_redmine_canvas_gantt` row from Redmine's `s
 - Stop the timer to create pending work, then record it through Redmine's standard time-entry form. Canceling the form or receiving a validation error keeps the pending timer.
 - The timer's measured work time is shown in `hh:mm` as well as the seconds-level display. Recorded hours are calculated from measured timestamp segments and rounded to two decimal places. Very short measurements may therefore open the form with `0.00`; Redmine validation remains authoritative.
 - While a timer-origin time entry is being edited or submitted, the pending session is reserved and cannot be resumed, extended, discarded, or recorded by another tab. If a reservation is stranded after its owner tab closes, another tab can explicitly recover it; a submission-phase recovery remains unknown until you check Redmine. If the save result cannot be confirmed, the session is retained as unknown until you explicitly mark it recorded or not registered after checking Redmine.
-
-See the [Timer Session architecture diagram](docs/architecture/timer-session-architecture.png) for the Presentation, Application/State, Timer Domain, Browser Infrastructure, and Redmine Server boundaries.
 
 ### Baseline snapshots
 
@@ -182,7 +190,10 @@ See the [Timer Session architecture diagram](docs/architecture/timer-session-arc
 
 ### Workload, display settings, and export
 
-- The workload pane can show daily capacity, peak and total workload, and filters for leaf issues, closed issues, and today-onward focus.
+- The workload pane compares planned estimates and recorded Time Entries over the visible histogram date range. Peak and total cells show Planned and Actual separately; outlined and filled daily bars share the same capacity threshold and are never stacked.
+- Planned hours remain the estimate divided across all working days of the issue. Actual hours belong to the Time Entry worker, including workers with no planned hours. Closed-issue, leaf-issue, and today-onward filters apply to both series.
+- Click either series to cycle through its contributing issues. The legend, daily tooltip, and accessible text distinguish both series. Saving a time entry refreshes actuals; loading or failed actual data is shown as `—`, while planned data remains available.
+- Actual data respects Redmine Issue/Time Entry visibility and the current project/query scope. Requests are limited to the displayed period (up to 730 calendar dates, including both endpoints) and the configured collection budget; oversized results produce an error rather than partial totals.
 - Display settings are stored in the browser's `localStorage`, not on a Redmine user record. Project mode applies to that project; global mode applies across projects in that same browser profile. It does not change settings in other browser profiles, but anyone using the same browser profile will see them. Settings cover zoom level, view mode, chart position, progress line, task titles, hierarchy lines, orphan date points, version headers, baseline visibility, visible columns, column order, dependency-based organization, column widths, sidebar width, custom zoom scales, row height, and font size.
 - The configuration screen also supports tracker icon mapping with a JSON object that maps tracker IDs to icon kinds.
 - Auto save determines whether edits are committed immediately or kept pending until you save them manually.

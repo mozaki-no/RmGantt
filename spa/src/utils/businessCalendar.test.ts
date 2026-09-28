@@ -19,7 +19,7 @@ import type { TaskDateIntervalMode } from './businessCalendar';
 import intervalVectors from './calendarDateIntervalVectors.json';
 import { calculateLinkedDownstreamUpdates, recalculateDownstreamTasks } from '../scheduling/constraintGraph';
 import { calculateCriticalPath } from '../scheduling/criticalPath';
-import { calculateDelay } from './relationEditing';
+import { calculateDelay, validateRelationDelayConsistency } from './relationEditing';
 import { AutoScheduleMoveMode, RelationType } from '../types/constraints';
 import type { Task } from '../types';
 import { TaskLogicService } from '../services/TaskLogicService';
@@ -134,6 +134,34 @@ describe('businessCalendar', () => {
             },
             error: 'invalid_interval'
         });
+    });
+
+    it('preserves non-working endpoints in calendar-days mode while validating the interval', () => {
+        expect(normalizeTaskDateInterval(
+            { startDate: timestamp('2027-01-02'), dueDate: timestamp('2027-01-03') },
+            {
+                changedFields: { startDate: true, dueDate: true },
+                projectId: '1',
+                mode: 'direct_edit',
+                datePlacementMode: 'calendar_days'
+            }
+        )).toEqual({
+            valid: true,
+            interval: {
+                startDate: timestamp('2027-01-02'),
+                dueDate: timestamp('2027-01-03')
+            }
+        });
+
+        expect(normalizeTaskDateInterval(
+            { startDate: timestamp('2027-01-03'), dueDate: timestamp('2027-01-02') },
+            {
+                changedFields: { startDate: true, dueDate: true },
+                projectId: '1',
+                mode: 'direct_edit',
+                datePlacementMode: 'calendar_days'
+            }
+        ).valid).toBe(false);
     });
 
     it.each(intervalVectors.cases)('matches shared interval vector: $name', (testCase) => {
@@ -253,6 +281,21 @@ describe('businessCalendar', () => {
 
         expect(japanUpdates.get('two')?.startDate).toBe(timestamp('2027-01-03'));
         expect(usUpdates.get('three')?.startDate).toBe(timestamp('2027-01-04'));
+    });
+
+    it.each([
+        { type: RelationType.Precedes, projectId: '1', delay: 2 },
+        { type: RelationType.Precedes, projectId: '2', delay: 1 },
+        { type: RelationType.Follows, projectId: '1', delay: 2 },
+        { type: RelationType.Follows, projectId: '2', delay: 1 }
+    ])('uses successor calendar $projectId for start-only $type delay and validation', ({ type, projectId, delay }) => {
+        const predecessor = { ...task('one', '1', '2027-01-01', '2027-01-01'), dueDate: undefined };
+        const successor = task('two', projectId, '2027-01-06', '2027-01-06');
+        const [from, to] = type === RelationType.Precedes ? [predecessor, successor] : [successor, predecessor];
+
+        expect(calculateDelay(type, from, to)).toEqual({ delay });
+        expect(validateRelationDelayConsistency(type, delay, from, to)).toEqual({ valid: true });
+        expect(validateRelationDelayConsistency(type, delay + 1, from, to).valid).toBe(false);
     });
 
     it('uses each downstream task calendar for linked shifts', () => {
