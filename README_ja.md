@@ -246,6 +246,19 @@ Ruby プロセスの外に逃がせます。
 プロキシ側で再エンコードする構成などで無効にしたい場合は
 `REDMINE_CANVAS_GANTT_DISABLE_GZIP=1` を設定してください。
 
+**Ruby YJIT。** payload の構築は Ruby の処理なので、CPU 性能に比例して時間が
+かかります。公式 Redmine イメージは YJIT を無効のまま Ruby を起動します。有効にすると、
+Redmine 7.0 / Ruby 4.0 で 10,000 チケットの data リクエストが 2.2 秒から 1.1 秒に
+なりました。Redmine 6.0 以降では `config/additional_environment.rb` に次の 1 行を
+追加し、Redmine を再起動してください。
+
+```ruby
+config.yjit = true
+```
+
+Redmine プロセスの環境変数に `RUBY_YJIT_ENABLE=1` を設定しても同じ効果があります。
+YJIT は追加メモリを使います（通常はプロセスあたり数十 MB）。
+
 **それでも表示が遅い場合**は、まずサーバ側を計測してください。data endpoint の
 クエリ数は、チケット件数によらず少数で一定になるはずです。チケット 1 件あたり
 1 クエリが出ている場合は、payload のどこかで preload が失われているということで、

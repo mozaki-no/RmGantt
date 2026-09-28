@@ -973,7 +973,8 @@ class CanvasGanttsController < ApplicationController
       current_user: User.current,
       issue_scope: Issue.visible,
       issue_includes: DATA_ISSUE_INCLUDES,
-      data_payload_budget: data_payload_budget
+      data_payload_budget: data_payload_budget,
+      lookup_association_preloader: RedmineCanvasGantt::LookupAssociationPreloader
     )
   end
 

@@ -38,31 +38,3 @@
   <!-- React App Mount Point -->
   Loading Canvas Gantt...
 </div>
-
-<%= javascript_tag do %>
-  (() => {
-    const root = document.getElementById('redmine-canvas-gantt-root');
-    if (!root) return;
-
-    const updateHeight = () => {
-      const viewportHeight = window.visualViewport?.height || window.innerHeight;
-      const top = root.getBoundingClientRect().top;
-      const footer = document.getElementById('footer');
-      const footerHeight = footer?.offsetHeight || 0;
-      const available = Math.max(400, Math.floor(viewportHeight - top - footerHeight - 16));
-      root.style.height = `${available}px`;
-    };
-
-    updateHeight();
-    window.addEventListener('resize', updateHeight, { passive: true });
-    window.visualViewport?.addEventListener('resize', updateHeight, { passive: true });
-
-    if (window.ResizeObserver) {
-      const observer = new ResizeObserver(updateHeight);
-      const header = document.getElementById('header');
-      const mainMenu = document.getElementById('main-menu');
-      if (header) observer.observe(header);
-      if (mainMenu) observer.observe(mainMenu);
-    }
-  })();
-<% end %>

@@ -230,4 +230,54 @@ describe('calculateCriticalPath', () => {
         expect(result.metricsByTaskId.A.totalSlackDays).toBe(3);
         expect(result.metricsByTaskId.B.totalSlackDays).toBe(0);
     });
+
+    it('orders tasks like a lowest-input-order-first Kahn traversal on a large dependency graph', () => {
+        // Reference: the plain array queue, re-sorted after every push.
+        const referenceOrder = (ids: string[], edges: Array<[string, string]>) => {
+            const order = new Map(ids.map((id, index) => [id, index]));
+            const indegree = new Map(ids.map((id) => [id, 0]));
+            const outgoing = new Map<string, string[]>(ids.map((id) => [id, []]));
+            edges.forEach(([from, to]) => {
+                indegree.set(to, (indegree.get(to) ?? 0) + 1);
+                outgoing.get(from)?.push(to);
+            });
+            const queue = ids.filter((id) => indegree.get(id) === 0);
+            const result: string[] = [];
+            while (queue.length > 0) {
+                queue.sort((left, right) => (order.get(left) ?? 0) - (order.get(right) ?? 0));
+                const id = queue.shift() as string;
+                result.push(id);
+                (outgoing.get(id) ?? []).forEach((next) => {
+                    indegree.set(next, (indegree.get(next) ?? 0) - 1);
+                    if (indegree.get(next) === 0) queue.push(next);
+                });
+            }
+            return result;
+        };
+
+        // Deterministic pseudo-random DAG: edges only go from a lower to a higher
+        // id number, while input order is shuffled so it disagrees with that.
+        let seed = 7;
+        const random = () => {
+            seed = (seed * 1103515245 + 12345) % 2147483648;
+            return seed / 2147483648;
+        };
+        const count = 400;
+        const ids = Array.from({ length: count }, (_, index) => `T${index}`);
+        const shuffled = [...ids].sort(() => random() - 0.5);
+        const edges: Array<[string, string]> = [];
+        for (let index = 0; index < count * 2; index += 1) {
+            const from = Math.floor(random() * (count - 1));
+            const to = from + 1 + Math.floor(random() * (count - from - 1));
+            edges.push([`T${from}`, `T${to}`]);
+        }
+        const tasks = shuffled.map((id) => buildTask({ id, startDate: MONDAY, dueDate: TUESDAY }));
+        const relations: Relation[] = edges.map(([from, to], index) => ({
+            id: `r${index}`, from, to, type: RelationType.Precedes
+        }));
+
+        const result = calculateCriticalPath(tasks, relations);
+
+        expect(result.orderedTaskIds).toEqual(referenceOrder(shuffled, edges));
+    });
 });

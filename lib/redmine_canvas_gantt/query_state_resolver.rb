@@ -1,4 +1,5 @@
 require_relative 'spent_hours_preloader'
+require_relative 'lookup_association_preloader'
 
 module RedmineCanvasGantt
   class QueryStateResolver
@@ -72,7 +73,8 @@ module RedmineCanvasGantt
     }.freeze
 
     def initialize(project:, params:, current_user:, issue_scope:, issue_includes:,
-                   data_payload_budget: nil, spent_hours_preloader: SpentHoursPreloader)
+                   data_payload_budget: nil, spent_hours_preloader: SpentHoursPreloader,
+                   lookup_association_preloader: nil)
       @project = project
       @params = params
       @current_user = current_user
@@ -80,6 +82,7 @@ module RedmineCanvasGantt
       @issue_includes = issue_includes
       @data_payload_budget = data_payload_budget
       @spent_hours_preloader = spent_hours_preloader
+      @lookup_association_preloader = lookup_association_preloader
       @warnings = []
     end
 
@@ -531,6 +534,7 @@ module RedmineCanvasGantt
       # Issue#spent_hours, which is a per-record SUM unless the collection is
       # preloaded. This is where the records are loaded, so it is where the
       # preload belongs; the serializer stays free of queries.
+      @lookup_association_preloader&.call(issues, lookup_includes)
       @spent_hours_preloader.call(issues, @current_user)
 
       sort_issues!(issues, state[:sort_config])
@@ -554,7 +558,21 @@ module RedmineCanvasGantt
       # are constant in the issue count, and at 10,000 issues it cut the median
       # load from 6.115s to 2.034s and allocations by 59.6%. See
       # docs/performance/2026-09-11-issue-load-strategy.md.
-      scope.preload(*@issue_includes)
+      # With a lookup_association_preloader, plain belongs_to lookups are
+      # assigned after loading instead, which is cheaper still.
+      scope.preload(*preload_includes)
+    end
+
+    def lookup_includes
+      return [] unless @lookup_association_preloader
+
+      @lookup_association_preloader.partition(Issue, @issue_includes).first
+    end
+
+    def preload_includes
+      return @issue_includes unless @lookup_association_preloader
+
+      @lookup_association_preloader.partition(Issue, @issue_includes).last
     end
 
     def project_scope_ids(project_ids, selected_project_ids)

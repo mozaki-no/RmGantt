@@ -14,6 +14,7 @@ import {
 import { timelineToCalendarDate } from '../utils/dateOnly';
 import { diffWorkingDays, normalizeWorkingDate, shiftByWorkingDays } from '../utils/businessCalendar';
 import { panViewportByPixels } from './viewportPan';
+import { wheelDeltaToPixels } from './wheelDelta';
 
 type DragMode = 'none' | 'pan' | 'task-move' | 'task-resize-start' | 'task-resize-end';
 const TASK_MOVE_CURSOR = 'move';
@@ -496,7 +497,10 @@ export class InteractionEngine {
         } else {
             // Scroll
             e.preventDefault();
-            this.scrollViewportByWheel(e.deltaX, e.deltaY);
+            this.scrollViewportByWheel(
+                wheelDeltaToPixels(e.deltaX, e.deltaMode, viewport.width),
+                wheelDeltaToPixels(e.deltaY, e.deltaMode, viewport.height)
+            );
         }
     };
 

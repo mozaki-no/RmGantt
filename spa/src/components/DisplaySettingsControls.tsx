@@ -1,6 +1,8 @@
 import React from 'react';
 
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../stores/TaskStore';
+import { pickKeys } from '../utils/pickKeys';
 import { useUIStore } from '../stores/UIStore';
 import { i18n } from '../utils/i18n';
 import {
@@ -102,7 +104,6 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
     const {
         zoomLevel,
         viewMode,
-        viewport,
         showVersions,
         organizeByDependency,
         setOrganizeByDependency,
@@ -111,7 +112,7 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
         autoSave,
         autoSaveTransition,
         requestAutoSaveChange
-    } = useTaskStore();
+    } = useTaskStore(useShallow(state => pickKeys(state, ['zoomLevel', 'viewMode', 'showVersions', 'organizeByDependency', 'setOrganizeByDependency', 'setRowHeight', 'customScales', 'autoSave', 'autoSaveTransition', 'requestAutoSaveChange'])));
     const {
         showProgressLine,
         showTaskTitles,
@@ -140,6 +141,7 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
         toggleLeftPane,
         toggleRightPane
     } = useUIStore();
+    const rowHeight = useTaskStore(state => state.viewport.rowHeight);
     const rowHeightOptions = [
         { value: 20, label: i18n.t('label_row_height_xs') || 'XS' },
         { value: 28, label: i18n.t('label_row_height_s') || 'S' },
@@ -185,6 +187,7 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
 
     const projectId = window.RedmineCanvasGantt?.projectId;
     const setShareAcrossProjects = (shareAcrossProjects: boolean) => {
+        const { viewport } = useTaskStore.getState();
         const snapshot = buildStoredDisplayPreferences({
             zoomLevel,
             viewMode,
@@ -444,7 +447,7 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
                                 <select
                                     data-testid="display-settings-row-height-select"
                                     aria-label={i18n.t('label_row_height') || 'Row height'}
-                                    value={viewport.rowHeight}
+                                    value={rowHeight}
                                     onChange={(event) => setRowHeight(Number(event.target.value))}
                                     style={{ height: 30, borderRadius: 6, border: `1px solid ${designTokens.controlBorderStrong}`, background: designTokens.controlBg, padding: '0 8px' }}
                                 >

@@ -65,7 +65,8 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver, type: :model do
       current_user: current_user,
       issue_scope: scope,
       issue_includes: CanvasGanttsController::DATA_ISSUE_INCLUDES,
-      data_payload_budget: RedmineCanvasGantt::DataPayloadBudget.new
+      data_payload_budget: RedmineCanvasGantt::DataPayloadBudget.new,
+      lookup_association_preloader: (RedmineCanvasGantt::LookupAssociationPreloader if strategy == :lookup)
     ).resolve(project_ids: project_ids).fetch(:issues)
   end
 
@@ -125,8 +126,17 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver, type: :model do
     expect(preloaded).to eq(included)
   end
 
-  it 'loads the serialization associations up front, so reading them costs no queries' do
-    issues = resolve_issues(:preload)
+  it 'serializes every task identically when lookups are assigned by LookupAssociationPreloader' do
+    preloaded = task_states_by_id(resolve_issues(:preload))
+    looked_up = task_states_by_id(resolve_issues(:lookup))
+
+    expect(looked_up).not_to be_empty
+    expect(looked_up).to eq(preloaded)
+  end
+
+  [:preload, :lookup].each do |strategy|
+  it "loads the serialization associations up front, so reading them costs no queries (#{strategy})" do
+    issues = resolve_issues(strategy)
     expect(issues).not_to be_empty
 
     statements = instrument_sql do
@@ -144,6 +154,7 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver, type: :model do
     end
 
     expect(statements).to be_empty
+  end
   end
 
   # Without this the parity examples above could be comparing two runs of the

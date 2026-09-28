@@ -3,7 +3,9 @@ import React from 'react';
 import type { TaskStatus, ZoomLevel } from '../types';
 import { AutoScheduleMoveMode, RelationType, type AutoScheduleMoveMode as AutoScheduleMoveModeValue, type DefaultRelationType } from '../types/constraints';
 import type { BaselineSaveScope } from '../types/baseline';
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../stores/TaskStore';
+import { pickKeys } from '../utils/pickKeys';
 import { useUIStore, DEFAULT_COLUMNS } from '../stores/UIStore';
 import { useBaselineStore } from '../stores/BaselineStore';
 import { i18n } from '../utils/i18n';
@@ -44,7 +46,7 @@ interface GanttToolbarProps {
 
 export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomChange, exportRef }) => {
     const {
-        viewport, updateViewport, groupByProject, setGroupByProject, groupByAssignee, setGroupByAssignee,
+        updateViewport, groupByProject, setGroupByProject, groupByAssignee, setGroupByAssignee,
         filterText, setFilterText, allTasks, versions, selectedAssigneeIds, setSelectedAssigneeIds,
         selectedProjectIds, projectSelectionExplicit, setSelectedProjectIds, selectedTrackerIds, setSelectedTrackerIds, selectedVersionIds, setSelectedVersionIds, memberProjectsOnly, setMemberProjectsOnly,
         taskStatuses, selectedStatusIds, setSelectedStatusFromServer, showVersions, setShowVersions,
@@ -52,7 +54,7 @@ export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomCha
         applySavedQuery: applySavedQueryFromStore,
         clearSavedQuery: clearSavedQueryFromStore,
         savedQueries, savedQueriesStatus, savedQueriesError, loadSavedQueries, queryContext
-    } = useTaskStore();
+    } = useTaskStore(useShallow(state => pickKeys(state, ['updateViewport', 'groupByProject', 'setGroupByProject', 'groupByAssignee', 'setGroupByAssignee', 'filterText', 'setFilterText', 'allTasks', 'versions', 'selectedAssigneeIds', 'setSelectedAssigneeIds', 'selectedProjectIds', 'projectSelectionExplicit', 'setSelectedProjectIds', 'selectedTrackerIds', 'setSelectedTrackerIds', 'selectedVersionIds', 'setSelectedVersionIds', 'memberProjectsOnly', 'setMemberProjectsOnly', 'taskStatuses', 'selectedStatusIds', 'setSelectedStatusFromServer', 'showVersions', 'setShowVersions', 'modifiedTaskIds', 'saveChanges', 'discardChanges', 'autoSave', 'customFields', 'activeQueryId', 'isQueryModified', 'sortConfig', 'showSubprojects', 'permissions', 'filterOptions', 'applySavedQuery', 'clearSavedQuery', 'savedQueries', 'savedQueriesStatus', 'savedQueriesError', 'loadSavedQueries', 'queryContext'])));
     const {
         showBaseline,
         toggleBaseline,
@@ -250,6 +252,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
     };
 
     const handleTodayClick = () => {
+        const { viewport } = useTaskStore.getState();
         const today = toTimelineDate(todayCalendarDate());
         let newStartDate = viewport.startDate;
 
@@ -268,6 +271,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
     };
 
     const navigateMonth = (offset: number) => {
+        const { viewport } = useTaskStore.getState();
         const leftDate = new Date(viewport.startDate + viewport.scrollX / viewport.scale);
         leftDate.setUTCDate(1);
         leftDate.setUTCMonth(leftDate.getUTCMonth() + offset);
