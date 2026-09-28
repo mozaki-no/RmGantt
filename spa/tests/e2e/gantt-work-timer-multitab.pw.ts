@@ -82,6 +82,13 @@ test('serializes simultaneous timer starts and synchronizes the winner across ta
   const initialDeadline = canonical.deadlineAt;
   const initialRevision = canonical.revision;
 
+  // The tab that lost the start race shows the "another timer is running" notice,
+  // whose backdrop would swallow the clicks below.
+  await Promise.all([
+    dismissRunningNoticeIfPresent(pageA, canonical.issueId),
+    dismissRunningNoticeIfPresent(pageB, canonical.issueId),
+  ]);
+
   await Promise.all([
     expect(pageA.getByTestId('global-timer')).toBeVisible(),
     expect(pageB.getByTestId('global-timer')).toBeVisible(),
@@ -93,6 +100,7 @@ test('serializes simultaneous timer starts and synchronizes the winner across ta
     pageB.getByTestId('global-timer-quick-extend').click(),
   ]);
 
+  // Both extends go through the cross-tab lock, so wait for the second one to land.
   await expect.poll(async () => pageA.evaluate(() => {
     const key = Object.keys(localStorage).find(candidate => candidate.startsWith('redmine_canvas_gantt_timer_session:'));
     if (!key) return null;
@@ -100,7 +108,7 @@ test('serializes simultaneous timer starts and synchronizes the winner across ta
     return { deadlineAt: session.deadlineAt, revision: session.revision };
   })).toMatchObject({
     deadlineAt: expect.any(Number),
-    revision: expect.any(Number),
+    revision: initialRevision + 2,
   });
 
   const afterConcurrentExtend = await pageA.evaluate(() => {
