@@ -41,6 +41,27 @@ describe('baseline diff helpers', () => {
         });
     });
 
+    it('flags status and progress changes from issue history even when dates match', () => {
+        const task = buildTask({ ratioDone: 60, statusId: 3 });
+        const diff = calculateBaselineDiff(task, {
+            issueId: 'task-1',
+            baselineStartDate: 0,
+            baselineDueDate: DAY,
+            baselineDoneRatio: 20,
+            baselineStatusId: 1
+        });
+
+        expect(diff).toMatchObject({
+            hasDifference: true,
+            startDeltaDays: 0,
+            dueDeltaDays: 0,
+            currentDoneRatio: 60,
+            baselineDoneRatio: 20,
+            currentStatusId: 3,
+            baselineStatusId: 1
+        });
+    });
+
     it('returns null when baseline task is missing', () => {
         const task = buildTask({});
         expect(calculateBaselineDiff(task, null)).toBeNull();

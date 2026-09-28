@@ -81,6 +81,8 @@ export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomCha
     } = useUIStore();
     const baselineSaveStatus = useBaselineStore(state => state.saveStatus);
     const hasBaseline = useBaselineStore(state => state.hasBaseline);
+    const historyDate = useBaselineStore(state => state.historyDate);
+    const historyStatus = useBaselineStore(state => state.historyStatus);
     const [projectSearchText, setProjectSearchText] = React.useState('');
     const resetProjectSearch = React.useCallback(() => setProjectSearchText(''), []);
     const {
@@ -238,6 +240,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                 throw new Error('Failed to save baseline');
             }
 
+            baselineStore.clearHistory();
             baselineStore.setSnapshot(result.baseline, result.warnings ?? []);
             baselineStore.setSaveStatus('ready');
             closeMenu('baselineSave');
@@ -251,6 +254,16 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
             const message = error instanceof Error ? error.message : (i18n.t('label_baseline_save_failed') || 'Failed to save baseline');
             baselineStore.setLastError(message);
             useUIStore.getState().addNotification(message, 'error');
+        }
+    };
+
+    const handleApplyHistory = async (date: string, time?: string) => {
+        const loaded = await useBaselineStore.getState().loadHistory(date, time);
+        if (loaded) {
+            useUIStore.getState().setShowBaseline(true);
+            closeMenu('baselineSave');
+        } else if (useBaselineStore.getState().historyStatus === 'error') {
+            useUIStore.getState().addNotification(i18n.t('label_history_load_failed') || 'Failed to load history', 'error');
         }
     };
 
@@ -1975,6 +1988,10 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     onToggleSaveMenu={() => toggleMenu('baselineSave')}
                     onSaveBaseline={(scope) => void handleSaveBaseline(scope)}
                     onToggleBaseline={() => toggleBaseline()}
+                    historyDate={historyDate}
+                    historyLoading={historyStatus === 'loading'}
+                    onApplyHistory={(date, time) => void handleApplyHistory(date, time)}
+                    onClearHistory={() => useBaselineStore.getState().clearHistory()}
                 />
                 <ActionNeededControl />
 
