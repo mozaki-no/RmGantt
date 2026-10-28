@@ -179,6 +179,33 @@ describe('GanttToolbar shortcuts', () => {
         expect(screen.getByText('今日以降のみ')).toBeInTheDocument();
     });
 
+    it('hides time tracking and version controls disabled for the project', () => {
+        const config = getCanvasGanttConfig();
+        window.RedmineCanvasGantt = { ...config, features: { timeTracking: false, versions: false } };
+        try {
+            render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+
+            expect(screen.queryByTestId('workload-menu-button')).not.toBeInTheDocument();
+            expect(document.querySelector('.gantt-toolbar-version-filter')).toBeNull();
+
+            fireEvent.click(screen.getByTestId('column-menu-button'));
+            const columnMenu = screen.getByTestId('column-menu-button').parentElement as HTMLElement;
+            expect(within(columnMenu).queryByText('Estimated Time')).not.toBeInTheDocument();
+            expect(within(columnMenu).queryByText('Spent Time')).not.toBeInTheDocument();
+            expect(within(columnMenu).queryByText('Target Version')).not.toBeInTheDocument();
+            expect(within(columnMenu).getByText('Status')).toBeInTheDocument();
+        } finally {
+            window.RedmineCanvasGantt = config;
+        }
+    });
+
+    it('shows time tracking and version controls by default', () => {
+        render(<GanttToolbar zoomLevel={1} onZoomChange={() => {}} exportRef={exportRef} />);
+
+        expect(screen.getByTestId('workload-menu-button')).toBeInTheDocument();
+        expect(document.querySelector('.gantt-toolbar-version-filter')).not.toBeNull();
+    });
+
     it('renders and toggles ticket visibility in the display settings popup', () => {
         const config = getCanvasGanttConfig();
         window.RedmineCanvasGantt = {

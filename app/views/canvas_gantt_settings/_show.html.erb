@@ -1,0 +1,15 @@
+<% canvas_gantt_features = RedmineCanvasGantt::ProjectFeatureSettings.new.load(project_id: @project.id) %>
+<%= form_tag(project_canvas_gantt_settings_path(@project), method: :put, id: 'canvas-gantt-settings-form') do %>
+  <div class="box tabular">
+    <p><em class="info"><%= l('canvas_gantt.text_project_features_info') %></em></p>
+    <% RedmineCanvasGantt::ProjectFeatureSettings::FEATURES.each do |feature| %>
+      <p>
+        <%= label_tag "canvas_gantt_features_#{feature}", l("canvas_gantt.label_project_feature_#{feature}") %>
+        <%= hidden_field_tag "canvas_gantt_features[#{feature}]", '0', id: nil %>
+        <%= check_box_tag "canvas_gantt_features[#{feature}]", '1', canvas_gantt_features[feature], id: "canvas_gantt_features_#{feature}" %>
+        <em class="info"><%= l("canvas_gantt.text_project_feature_#{feature}") %></em>
+      </p>
+    <% end %>
+  </div>
+  <%= submit_tag l(:button_save) %>
+<% end %>

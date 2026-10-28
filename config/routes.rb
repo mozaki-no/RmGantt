@@ -7,6 +7,7 @@ RedmineApp::Application.routes.draw do
     get 'canvas_gantt/actual_workload', to: 'canvas_gantts#actual_workload'
     get 'canvas_gantt/data', to: 'canvas_gantts#data'
     get 'canvas_gantt/queries', to: 'canvas_gantts#queries'
+    put 'canvas_gantt/settings', to: 'canvas_gantt_settings#update', as: 'canvas_gantt_settings'
     post 'canvas_gantt/baseline', to: 'canvas_gantts#save_baseline'
     get 'canvas_gantt/history_baseline', to: 'canvas_gantts#history_baseline'
     get 'canvas_gantt/tasks/:id/edit_meta', to: 'canvas_gantts#edit_meta'

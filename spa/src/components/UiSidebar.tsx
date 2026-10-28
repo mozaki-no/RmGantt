@@ -28,6 +28,7 @@ import { ContextPreviewViolationError, previewContextChange, StaleContextPreview
 import { StaleEditMetaResponseError } from '../stores/EditMetaStore';
 import { useTimerStore } from '../stores/TimerStore';
 import { WorkTimerIcon } from './timer/WorkTimerIcon';
+import { getProjectFeatures, isColumnFeatureEnabled } from '../utils/projectFeatures';
 const NOTIFICATION_COLUMN_KEY = 'notification';
 
 type CanvasGanttSettings = InlineEditSettings & {
@@ -783,7 +784,9 @@ export const UiSidebar: React.FC = () => {
         columns.map((column) => ({ key: column.key, label: column.title })),
         visibleColumns
     );
-    const activeColumnKeys = resolveVisibleColumnKeys(effectiveColumnSettings, []);
+    const projectFeatures = getProjectFeatures();
+    const activeColumnKeys = resolveVisibleColumnKeys(effectiveColumnSettings, [])
+        .filter((key) => isColumnFeatureEnabled(key, projectFeatures));
     const activeColumns = activeColumnKeys
         .map((key) => columns.find((col) => col.key === key))
         .filter((col): col is SidebarColumn => Boolean(col));
