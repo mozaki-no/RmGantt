@@ -11,6 +11,10 @@ RSpec.describe CanvasGanttSettingsController, type: :controller do
     allow(RedmineCanvasGantt::ProjectFeatureSettings).to receive(:new).and_return(feature_settings)
   end
 
+  after do
+    User.current = nil
+  end
+
   it 'saves the feature switches for a user who can edit the project' do
     User.current = User.find(1)
     session[:user_id] = 1
