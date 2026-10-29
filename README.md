@@ -191,6 +191,7 @@ To verify in a spreadsheet, create test issues with subject `=1+1`, parent subje
 
 ### Workload, display settings, and export
 
+- **Per-project features**: the Canvas Gantt tab of a project's Settings turns time tracking (workload, work timer, estimated and spent time columns) and versions (version filter, version headers, target version column) on or off. Buttons and columns of a disabled feature are hidden in that project's Canvas Gantt. Changing them needs the Edit project permission; both are on by default. The values are stored in `Setting.plugin_redmine_canvas_gantt`.
 - The workload pane compares planned estimates and recorded Time Entries over the visible histogram date range. Peak and total cells show Planned and Actual separately; outlined and filled daily bars share the same capacity threshold and are never stacked.
 - Planned hours remain the estimate divided across all working days of the issue. Actual hours belong to the Time Entry worker, including workers with no planned hours. Closed-issue, leaf-issue, and today-onward filters apply to both series.
 - Click either series to cycle through its contributing issues. The legend, daily tooltip, and accessible text distinguish both series. Saving a time entry refreshes actuals; loading or failed actual data is shown as `—`, while planned data remains available.

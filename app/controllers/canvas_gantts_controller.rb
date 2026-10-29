@@ -539,6 +539,7 @@ class CanvasGanttsController < ApplicationController
   def index
     @i18n = I18N_LABELS.transform_values { |label_key| canvas_gantt_l(label_key, default: label_key) }
     @settings = plugin_settings
+    @features = project_features
     @non_working_week_days = normalized_non_working_week_days
     @language = (User.current.language.presence || Setting.default_language).to_s
     @date_format = Setting.date_format.presence || canvas_gantt_l(:general_format_date)
@@ -1074,6 +1075,10 @@ class CanvasGanttsController < ApplicationController
 
   def plugin_settings
     CANVAS_GANTT_UI_SETTINGS
+  end
+
+  def project_features
+    RedmineCanvasGantt::ProjectFeatureSettings.new.load(project_id: @project.id)
   end
 
   def history_baseline_moment(date, raw_time)

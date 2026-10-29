@@ -192,6 +192,7 @@ declare global {
             dateFormat?: string;
             yearMonthFormat?: string;
             settings?: InlineEditSettings & { row_height?: string; tracker_icon_map?: string };
+            features?: { timeTracking?: boolean; versions?: boolean };
             i18n?: Record<string, string>;
         };
     }

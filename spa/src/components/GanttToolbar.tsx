@@ -37,6 +37,7 @@ import { useToolbarShortcuts } from './gantt/useToolbarShortcuts';
 import { fontFamilies, designTokens } from '../styles/designTokens';
 import { toTimelineDate, todayCalendarDate } from '../utils/dateOnly';
 import './GanttToolbar.css';
+import { getProjectFeatures, isColumnFeatureEnabled } from '../utils/projectFeatures';
 import { ActionNeededControl } from './actionNeeded/ActionNeededControl';
 
 interface GanttToolbarProps {
@@ -395,7 +396,8 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
         return localizedLabel[key] ?? fallback;
     };
 
-    const baseColumnOptions = COLUMN_CATALOG.map((column) => ({
+    const projectFeatures = getProjectFeatures();
+    const baseColumnOptions = COLUMN_CATALOG.filter((column) => isColumnFeatureEnabled(column.key, projectFeatures)).map((column) => ({
         key: column.key,
         label: getColumnLabel(column.key, column.label)
     }));
@@ -987,111 +989,113 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     )}
                 </div>
 
-                <div ref={workloadMenuRef} className="gantt-toolbar-workload" style={{ position: 'relative' }}>
-                    <button
-                    onClick={() => toggleMenu('workload')}
-                    title={i18n.t('label_workload') || 'Workload'}
-                    data-testid="workload-menu-button"
-                    className="gantt-toolbar-labeled-button"
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                padding: '0',
-                                borderRadius: '6px',
-                                border: `1px solid ${designTokens.controlBorder}`,
-                                backgroundColor: workloadPaneVisible ? designTokens.controlActiveBg : designTokens.controlBg,
-                                color: workloadPaneVisible ? designTokens.controlActiveFg : designTokens.controlFg,
-                                cursor: 'pointer',
-                                height: '32px',
-                                width: '32px',
-                                position: 'relative'
-                            }}
-                    >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="20" x2="18" y2="10" />
-                        <line x1="12" y1="20" x2="12" y2="4" />
-                        <line x1="6" y1="20" x2="6" y2="14" />
-                    </svg>
-                    <span className="gantt-toolbar-button-label">{i18n.t('label_workload_short') || 'Workload'}</span>
-                        {workloadPaneVisible && (
-                            <div style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, backgroundColor: designTokens.controlActiveFg, borderRadius: '50%' }} />
-                        )}
-                    </button>
-                    
-                    {showWorkloadMenu && (
-                        <div
-                            data-testid="workload-menu"
-                            style={{
-                                position: 'absolute',
-                                top: '100%',
-                                left: 0,
-                                marginTop: '4px',
-                                background: designTokens.controlBg,
-                                border: `1px solid ${designTokens.controlBorder}`,
-                                borderRadius: '8px',
-                                boxShadow: designTokens.menuShadow,
-                                padding: '12px',
-                                zIndex: 20,
-                                minWidth: '220px',
-                                maxHeight: '350px',
-                                overflowY: 'auto'
-                            }}
+                {projectFeatures.timeTracking && (
+                    <div ref={workloadMenuRef} className="gantt-toolbar-workload" style={{ position: 'relative' }}>
+                        <button
+                        onClick={() => toggleMenu('workload')}
+                        title={i18n.t('label_workload') || 'Workload'}
+                        data-testid="workload-menu-button"
+                        className="gantt-toolbar-labeled-button"
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: '0',
+                                    borderRadius: '6px',
+                                    border: `1px solid ${designTokens.controlBorder}`,
+                                    backgroundColor: workloadPaneVisible ? designTokens.controlActiveBg : designTokens.controlBg,
+                                    color: workloadPaneVisible ? designTokens.controlActiveFg : designTokens.controlFg,
+                                    cursor: 'pointer',
+                                    height: '32px',
+                                    width: '32px',
+                                    position: 'relative'
+                                }}
                         >
-                            <div style={{ fontWeight: 600, marginBottom: '8px', color: designTokens.controlFg }}>{i18n.t('label_workload') || 'Workload'}</div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', color: designTokens.controlFg, cursor: 'pointer', borderBottom: `1px solid ${designTokens.borderSubtle}`, marginBottom: '8px' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={workloadPaneVisible}
-                                    onChange={toggleWorkloadPaneVisible}
-                                />
-                                <span style={{ fontWeight: 500 }}>{i18n.t('label_show_workload') || 'Show Workload Pane'}</span>
-                            </label>
-
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', opacity: workloadPaneVisible ? 1 : 0.5, pointerEvents: workloadPaneVisible ? 'auto' : 'none' }}>
-                                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: designTokens.textSecondary }}>
-                                    <span>{i18n.t('label_capacity_threshold') || 'Capacity Threshold (hours/day)'}</span>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="24"
-                                        step="0.5"
-                                        value={capacityThreshold}
-                                        onChange={(e) => setCapacityThreshold(Number(e.target.value))}
-                                        style={{ padding: '4px 8px', width: '80px', border: `1px solid ${designTokens.controlBorderStrong}`, borderRadius: '4px' }}
-                                    />
-                                </label>
-
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={leafIssuesOnly}
-                                        onChange={(e) => setLeafIssuesOnly(e.target.checked)}
-                                    />
-                                    {i18n.t('label_leaf_issues_only') || 'Leaf Issues Only'}
-                                </label>
-
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="20" x2="18" y2="10" />
+                            <line x1="12" y1="20" x2="12" y2="4" />
+                            <line x1="6" y1="20" x2="6" y2="14" />
+                        </svg>
+                        <span className="gantt-toolbar-button-label">{i18n.t('label_workload_short') || 'Workload'}</span>
+                            {workloadPaneVisible && (
+                                <div style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, backgroundColor: designTokens.controlActiveFg, borderRadius: '50%' }} />
+                            )}
+                        </button>
+                    
+                        {showWorkloadMenu && (
+                            <div
+                                data-testid="workload-menu"
+                                style={{
+                                    position: 'absolute',
+                                    top: '100%',
+                                    left: 0,
+                                    marginTop: '4px',
+                                    background: designTokens.controlBg,
+                                    border: `1px solid ${designTokens.controlBorder}`,
+                                    borderRadius: '8px',
+                                    boxShadow: designTokens.menuShadow,
+                                    padding: '12px',
+                                    zIndex: 20,
+                                    minWidth: '220px',
+                                    maxHeight: '350px',
+                                    overflowY: 'auto'
+                                }}
+                            >
+                                <div style={{ fontWeight: 600, marginBottom: '8px', color: designTokens.controlFg }}>{i18n.t('label_workload') || 'Workload'}</div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', color: designTokens.controlFg, cursor: 'pointer', borderBottom: `1px solid ${designTokens.borderSubtle}`, marginBottom: '8px' }}>
                                     <input
                                         type="checkbox"
-                                        checked={includeClosedIssues}
-                                        onChange={(e) => setIncludeClosedIssues(e.target.checked)}
+                                        checked={workloadPaneVisible}
+                                        onChange={toggleWorkloadPaneVisible}
                                     />
-                                    {i18n.t('label_include_closed_issues') || 'Include Closed Issues'}
+                                    <span style={{ fontWeight: 500 }}>{i18n.t('label_show_workload') || 'Show Workload Pane'}</span>
                                 </label>
 
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={todayOnwardOnly}
-                                        onChange={(e) => setTodayOnwardOnly(e.target.checked)}
-                                    />
-                                    {i18n.t('label_today_onward_only') || 'Today Onward Only'}
-                                </label>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', opacity: workloadPaneVisible ? 1 : 0.5, pointerEvents: workloadPaneVisible ? 'auto' : 'none' }}>
+                                    <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: designTokens.textSecondary }}>
+                                        <span>{i18n.t('label_capacity_threshold') || 'Capacity Threshold (hours/day)'}</span>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="24"
+                                            step="0.5"
+                                            value={capacityThreshold}
+                                            onChange={(e) => setCapacityThreshold(Number(e.target.value))}
+                                            style={{ padding: '4px 8px', width: '80px', border: `1px solid ${designTokens.controlBorderStrong}`, borderRadius: '4px' }}
+                                        />
+                                    </label>
+
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={leafIssuesOnly}
+                                            onChange={(e) => setLeafIssuesOnly(e.target.checked)}
+                                        />
+                                        {i18n.t('label_leaf_issues_only') || 'Leaf Issues Only'}
+                                    </label>
+
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={includeClosedIssues}
+                                            onChange={(e) => setIncludeClosedIssues(e.target.checked)}
+                                        />
+                                        {i18n.t('label_include_closed_issues') || 'Include Closed Issues'}
+                                    </label>
+
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={todayOnwardOnly}
+                                            onChange={(e) => setTodayOnwardOnly(e.target.checked)}
+                                        />
+                                        {i18n.t('label_today_onward_only') || 'Today Onward Only'}
+                                    </label>
+                                </div>
                             </div>
-                        </div>
-                    )}
-                </div>
+                        )}
+                    </div>
+                )}
 
                 <div ref={projectMenuRef} className="gantt-toolbar-project-filter" style={{ position: 'relative' }}>
                     <button
@@ -1327,107 +1331,109 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     )}
                 </div>
 
-                <div ref={versionMenuRef} className="gantt-toolbar-version-filter" style={{ position: 'relative' }}>
-                    <button
-                    onClick={() => toggleMenu('version')}
-                    title={i18n.t('label_version_plural') || 'Filter by version'}
-                    className="gantt-toolbar-labeled-button"
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                padding: '0',
-                                borderRadius: '6px',
-                            border: `1px solid ${designTokens.controlBorder}`,
-                            backgroundColor: (selectedVersionIds.length > 0 || showVersions) ? designTokens.controlActiveBg : designTokens.controlBg,
-                            color: (selectedVersionIds.length > 0 || showVersions) ? designTokens.controlActiveFg : designTokens.controlFg,
-                            cursor: 'pointer',
-                            height: '32px',
-                            width: '32px',
-                            position: 'relative'
-                        }}
-                    >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-                        <line x1="4" y1="22" x2="4" y2="15" />
-                    </svg>
-                    <span className="gantt-toolbar-button-label">{i18n.t('label_version_short') || 'Ver.'}</span>
-                        {(selectedVersionIds.length > 0 || showVersions) && (
-                            <div style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, backgroundColor: designTokens.controlActiveFg, borderRadius: '50%' }} />
-                        )}
-                    </button>
-                    
-                    {showVersionMenu && (
-                        <div
-                            style={{
-                                position: 'absolute',
-                                top: '100%',
-                                left: 0,
-                                marginTop: '4px',
-                                background: designTokens.controlBg,
+                {projectFeatures.versions && (
+                    <div ref={versionMenuRef} className="gantt-toolbar-version-filter" style={{ position: 'relative' }}>
+                        <button
+                        onClick={() => toggleMenu('version')}
+                        title={i18n.t('label_version_plural') || 'Filter by version'}
+                        className="gantt-toolbar-labeled-button"
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: '0',
+                                    borderRadius: '6px',
                                 border: `1px solid ${designTokens.controlBorder}`,
-                                borderRadius: '8px',
-                                boxShadow: designTokens.menuShadow,
-                                padding: '12px',
-                                zIndex: 20,
-                                minWidth: '200px',
-                                maxHeight: '300px',
-                                overflowY: 'auto'
+                                backgroundColor: (selectedVersionIds.length > 0 || showVersions) ? designTokens.controlActiveBg : designTokens.controlBg,
+                                color: (selectedVersionIds.length > 0 || showVersions) ? designTokens.controlActiveFg : designTokens.controlFg,
+                                cursor: 'pointer',
+                                height: '32px',
+                                width: '32px',
+                                position: 'relative'
                             }}
                         >
-                            <div style={{ fontWeight: 600, marginBottom: '8px', color: designTokens.controlFg }}>{i18n.t('label_version_plural') || 'Versions'}</div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', color: designTokens.controlFg, cursor: 'pointer', borderBottom: `1px solid ${designTokens.borderSubtle}`, marginBottom: '8px' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={isAllVersionsSelected}
-                                    onChange={toggleAllVersions}
-                                />
-                                <span style={{ fontWeight: 500 }}>{i18n.t('label_all_select') || 'Select All'}</span>
-                            </label>
-                            {versionsList.map(version => (
-                                <label key={version.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedVersionIds.includes(version.id)}
-                                        onChange={() => toggleVersion(version.id)}
-                                    />
-                                    {version.name}
-                                </label>
-                            ))}
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer', fontStyle: 'italic' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={selectedVersionIds.includes('_none')}
-                                    onChange={() => toggleVersion('_none')}
-                                />
-                                {i18n.t('label_none') || '(No version)'}
-                            </label>
-                            <div style={{ borderTop: `1px solid ${designTokens.borderSubtle}`, marginTop: '8px', paddingTop: '8px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={showVersions}
-                                        onChange={() => setShowVersions(!showVersions)}
-                                    />
-                                    {i18n.t('label_show_versions') || 'Show version headers'}
-                                </label>
-                            </div>
-                            <button
-                                onClick={() => setSelectedVersionIds([])}
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                            <line x1="4" y1="22" x2="4" y2="15" />
+                        </svg>
+                        <span className="gantt-toolbar-button-label">{i18n.t('label_version_short') || 'Ver.'}</span>
+                            {(selectedVersionIds.length > 0 || showVersions) && (
+                                <div style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, backgroundColor: designTokens.controlActiveFg, borderRadius: '50%' }} />
+                            )}
+                        </button>
+                    
+                        {showVersionMenu && (
+                            <div
                                 style={{
-                                    marginTop: '8px',
-                                    border: 'none',
-                                    background: 'transparent',
-                                    color: designTokens.controlActiveFg,
-                                    cursor: 'pointer',
-                                    padding: 0
+                                    position: 'absolute',
+                                    top: '100%',
+                                    left: 0,
+                                    marginTop: '4px',
+                                    background: designTokens.controlBg,
+                                    border: `1px solid ${designTokens.controlBorder}`,
+                                    borderRadius: '8px',
+                                    boxShadow: designTokens.menuShadow,
+                                    padding: '12px',
+                                    zIndex: 20,
+                                    minWidth: '200px',
+                                    maxHeight: '300px',
+                                    overflowY: 'auto'
                                 }}
                             >
-                                {i18n.t('label_clear_filter') || 'Clear'}
-                            </button>
-                        </div>
-                    )}
-                </div>
+                                <div style={{ fontWeight: 600, marginBottom: '8px', color: designTokens.controlFg }}>{i18n.t('label_version_plural') || 'Versions'}</div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', color: designTokens.controlFg, cursor: 'pointer', borderBottom: `1px solid ${designTokens.borderSubtle}`, marginBottom: '8px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={isAllVersionsSelected}
+                                        onChange={toggleAllVersions}
+                                    />
+                                    <span style={{ fontWeight: 500 }}>{i18n.t('label_all_select') || 'Select All'}</span>
+                                </label>
+                                {versionsList.map(version => (
+                                    <label key={version.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedVersionIds.includes(version.id)}
+                                            onChange={() => toggleVersion(version.id)}
+                                        />
+                                        {version.name}
+                                    </label>
+                                ))}
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer', fontStyle: 'italic' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedVersionIds.includes('_none')}
+                                        onChange={() => toggleVersion('_none')}
+                                    />
+                                    {i18n.t('label_none') || '(No version)'}
+                                </label>
+                                <div style={{ borderTop: `1px solid ${designTokens.borderSubtle}`, marginTop: '8px', paddingTop: '8px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={showVersions}
+                                            onChange={() => setShowVersions(!showVersions)}
+                                        />
+                                        {i18n.t('label_show_versions') || 'Show version headers'}
+                                    </label>
+                                </div>
+                                <button
+                                    onClick={() => setSelectedVersionIds([])}
+                                    style={{
+                                        marginTop: '8px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        color: designTokens.controlActiveFg,
+                                        cursor: 'pointer',
+                                        padding: 0
+                                    }}
+                                >
+                                    {i18n.t('label_clear_filter') || 'Clear'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <div ref={assigneeMenuRef} className="gantt-toolbar-assignee-filter" style={{ position: 'relative' }}>
                     <button

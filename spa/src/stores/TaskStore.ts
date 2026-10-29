@@ -69,6 +69,7 @@ import {
     type ReadContext,
     type ServerSnapshot
 } from './taskStore/stateContract';
+import { getProjectFeatures } from '../utils/projectFeatures';
 import { selectConflictRemote, type SelectedConflictRemote } from './taskStore/conflictRemote';
 import { applyScheduleConflict, prepareScheduleConflict, scheduleConflictIds, selectScheduleConflict, type ScheduleConflictReview } from './taskStore/scheduleConflictResolution';
 import {
@@ -437,7 +438,7 @@ const buildLayoutFromState = (state: LayoutState, overrides: Partial<LayoutState
         layoutState.versions,
         layoutState.groupByProject,
         layoutState.groupByAssignee,
-        layoutState.showVersions,
+        layoutState.showVersions && getProjectFeatures().versions,
         layoutState.organizeByDependency,
         layoutState.projectExpansion,
         layoutState.versionExpansion,
@@ -2508,7 +2509,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
             Object.keys(state.projectExpansion).length > 0 &&
             Object.values(state.projectExpansion).some(v => v === false);
 
-        const anyVersionCollapsed = state.showVersions &&
+        const anyVersionCollapsed = state.showVersions && getProjectFeatures().versions &&
             Object.keys(state.versionExpansion).length > 0 &&
             Object.values(state.versionExpansion).some(v => v === false);
 

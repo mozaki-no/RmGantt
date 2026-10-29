@@ -987,6 +987,15 @@ RSpec.describe CanvasGanttsController, type: :controller do
       allow(Setting).to receive(:non_working_week_days).and_return(['6', '7'])
     end
 
+    it 'publishes the project feature switches' do
+      allow(controller).to receive(:project_features).and_return('time_tracking' => false, 'versions' => true)
+
+      get :index, params: { project_id: 'demo' }
+
+      expect(response).to have_http_status(:ok)
+      expect(controller.instance_variable_get(:@features)).to eq('time_tracking' => false, 'versions' => true)
+    end
+
     { en: ['Search projects...', 'No matching projects'],
       ja: ['プロジェクトを検索', '一致するプロジェクトがありません'] }.each do |locale, labels|
       it "publishes project candidate search labels in #{locale}" do
@@ -1029,6 +1038,7 @@ RSpec.describe CanvasGanttsController, type: :controller do
     end
 
     it 'includes row height labels in frontend i18n payload' do
+      allow(controller).to receive(:project_features).and_return('time_tracking' => true, 'versions' => true)
       expect(Setting).not_to receive(:plugin_redmine_canvas_gantt)
 
       get :index, params: { project_id: 'demo' }

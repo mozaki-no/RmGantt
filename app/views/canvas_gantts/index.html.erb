@@ -11,6 +11,7 @@
       authToken: '<%= form_authenticity_token %>',
       i18n: <%= @i18n.to_json.html_safe %>,
       settings: <%= (@settings || {}).to_json.html_safe %>,
+      features: <%= { timeTracking: @features.fetch('time_tracking', true), versions: @features.fetch('versions', true) }.to_json.html_safe %>,
       nonWorkingWeekDays: <%= (@non_working_week_days || [0, 6]).to_json.html_safe %>,
       userId: <%= User.current.logged? ? User.current.id : 'null' %>,
       language: '<%= @language %>',
