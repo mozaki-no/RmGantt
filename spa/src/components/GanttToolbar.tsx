@@ -39,6 +39,7 @@ import { toTimelineDate, todayCalendarDate } from '../utils/dateOnly';
 import './GanttToolbar.css';
 import { getProjectFeatures, isColumnFeatureEnabled } from '../utils/projectFeatures';
 import { ActionNeededControl } from './actionNeeded/ActionNeededControl';
+import { useKeepInViewport } from './gantt/useKeepInViewport';
 
 interface GanttToolbarProps {
     zoomLevel: ZoomLevel;
@@ -141,6 +142,8 @@ export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomCha
 const showDisplaySettingsMenu = isMenuOpen('displaySettings');
     const showRelationSettingsMenu = isMenuOpen('relationSettings');
     const showExportMenu = isMenuOpen('export');
+    const relationSettingsPanelRef = useKeepInViewport<HTMLDivElement>(showRelationSettingsMenu);
+    const exportPanelRef = useKeepInViewport<HTMLDivElement>(showExportMenu);
     const showWorkloadMenu = isMenuOpen('workload');
     const showBaselineSaveMenu = isMenuOpen('baselineSave');
     const displayedActiveQueryId = pendingSavedQueryId ?? activeQueryId;
@@ -1673,6 +1676,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     </button>
                     {showRelationSettingsMenu && (
                         <div
+                            ref={relationSettingsPanelRef}
                             data-testid="relation-settings-menu"
                             style={{
                                 position: 'absolute',
@@ -1891,6 +1895,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     </button>
                     {showExportMenu && (
                         <div
+                            ref={exportPanelRef}
                             data-testid="export-menu"
                             style={{
                                 position: 'absolute',
