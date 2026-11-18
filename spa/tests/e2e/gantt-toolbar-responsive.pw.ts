@@ -160,3 +160,23 @@ test('responds to a narrow embedded toolbar and preserves primary interactions',
   await page.getByRole('button', { name: 'Previous month' }).click();
   await expect(page.getByRole('button', { name: 'Day', exact: true })).toBeVisible();
 });
+
+test('keeps right-aligned toolbar menus inside the viewport when their button wraps to the left edge', async ({ page }) => {
+  await waitForInitialRender(page);
+
+  for (const width of [1440, 1280, 1200, 1000, 900, 800]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const [button, menu] of [
+      ['display-settings-menu-button', 'display-settings-menu'],
+      ['relation-settings-menu-button', 'relation-settings-menu'],
+      ['export-menu-button', 'export-menu'],
+    ] as const) {
+      const trigger = page.getByTestId(button);
+      if (!(await trigger.isVisible())) continue;
+      await trigger.click();
+      await expectPopupInViewport(page, menu);
+      await trigger.click();
+      await expect(page.getByTestId(menu)).toBeHidden();
+    }
+  }
+});

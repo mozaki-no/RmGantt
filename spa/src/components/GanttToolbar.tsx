@@ -39,6 +39,7 @@ import { toTimelineDate, todayCalendarDate } from '../utils/dateOnly';
 import './GanttToolbar.css';
 import { getProjectFeatures, isColumnFeatureEnabled } from '../utils/projectFeatures';
 import { ActionNeededControl } from './actionNeeded/ActionNeededControl';
+import { useKeepInViewport } from './gantt/useKeepInViewport';
 
 interface GanttToolbarProps {
     zoomLevel: ZoomLevel;
@@ -50,13 +51,13 @@ export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomCha
     const {
         updateViewport, groupByProject, setGroupByProject, groupByAssignee, setGroupByAssignee,
         filterText, setFilterText, allTasks, versions, selectedAssigneeIds, setSelectedAssigneeIds,
-        selectedProjectIds, projectSelectionExplicit, setSelectedProjectIds, selectedTrackerIds, setSelectedTrackerIds, selectedVersionIds, setSelectedVersionIds, memberProjectsOnly, setMemberProjectsOnly,
+        selectedProjectIds, projectSelectionExplicit, setSelectedProjectIds, selectedTrackerIds, setSelectedTrackerIds, selectedVersionIds, setSelectedVersionIds, memberProjectsOnly, setMemberProjectsOnly, showFilterParents, setShowFilterParents,
         taskStatuses, selectedStatusIds, setSelectedStatusFromServer, showVersions, setShowVersions,
         modifiedTaskIds, saveChanges, discardChanges, autoSave, customFields, activeQueryId, isQueryModified, sortConfig, showSubprojects, permissions, filterOptions,
         applySavedQuery: applySavedQueryFromStore,
         clearSavedQuery: clearSavedQueryFromStore,
         savedQueries, savedQueriesStatus, savedQueriesError, loadSavedQueries, queryContext
-    } = useTaskStore(useShallow(state => pickKeys(state, ['updateViewport', 'groupByProject', 'setGroupByProject', 'groupByAssignee', 'setGroupByAssignee', 'filterText', 'setFilterText', 'allTasks', 'versions', 'selectedAssigneeIds', 'setSelectedAssigneeIds', 'selectedProjectIds', 'projectSelectionExplicit', 'setSelectedProjectIds', 'selectedTrackerIds', 'setSelectedTrackerIds', 'selectedVersionIds', 'setSelectedVersionIds', 'memberProjectsOnly', 'setMemberProjectsOnly', 'taskStatuses', 'selectedStatusIds', 'setSelectedStatusFromServer', 'showVersions', 'setShowVersions', 'modifiedTaskIds', 'saveChanges', 'discardChanges', 'autoSave', 'customFields', 'activeQueryId', 'isQueryModified', 'sortConfig', 'showSubprojects', 'permissions', 'filterOptions', 'applySavedQuery', 'clearSavedQuery', 'savedQueries', 'savedQueriesStatus', 'savedQueriesError', 'loadSavedQueries', 'queryContext'])));
+    } = useTaskStore(useShallow(state => pickKeys(state, ['updateViewport', 'groupByProject', 'setGroupByProject', 'groupByAssignee', 'setGroupByAssignee', 'filterText', 'setFilterText', 'allTasks', 'versions', 'selectedAssigneeIds', 'setSelectedAssigneeIds', 'selectedProjectIds', 'projectSelectionExplicit', 'setSelectedProjectIds', 'selectedTrackerIds', 'setSelectedTrackerIds', 'selectedVersionIds', 'setSelectedVersionIds', 'memberProjectsOnly', 'setMemberProjectsOnly', 'showFilterParents', 'setShowFilterParents', 'taskStatuses', 'selectedStatusIds', 'setSelectedStatusFromServer', 'showVersions', 'setShowVersions', 'modifiedTaskIds', 'saveChanges', 'discardChanges', 'autoSave', 'customFields', 'activeQueryId', 'isQueryModified', 'sortConfig', 'showSubprojects', 'permissions', 'filterOptions', 'applySavedQuery', 'clearSavedQuery', 'savedQueries', 'savedQueriesStatus', 'savedQueriesError', 'loadSavedQueries', 'queryContext'])));
     const {
         showBaseline,
         toggleBaseline,
@@ -141,6 +142,8 @@ export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomCha
 const showDisplaySettingsMenu = isMenuOpen('displaySettings');
     const showRelationSettingsMenu = isMenuOpen('relationSettings');
     const showExportMenu = isMenuOpen('export');
+    const relationSettingsPanelRef = useKeepInViewport<HTMLDivElement>(showRelationSettingsMenu);
+    const exportPanelRef = useKeepInViewport<HTMLDivElement>(showExportMenu);
     const showWorkloadMenu = isMenuOpen('workload');
     const showBaselineSaveMenu = isMenuOpen('baselineSave');
     const displayedActiveQueryId = pendingSavedQueryId ?? activeQueryId;
@@ -1492,6 +1495,15 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                                 />
                                 <span style={{ fontWeight: 500 }}>{i18n.t('label_all_select') || 'Select All'}</span>
                             </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 0 8px', color: designTokens.textSecondary, cursor: 'pointer', borderBottom: `1px solid ${designTokens.borderSubtle}`, marginBottom: '8px' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={showFilterParents}
+                                    onChange={(event) => { void setShowFilterParents(event.target.checked).catch((error) => console.error('Failed to refresh data', error)); }}
+                                    aria-label={i18n.t('label_show_filter_parents') || 'Also show parent issues'}
+                                />
+                                <span>{i18n.t('label_show_filter_parents') || 'Also show parent issues'}</span>
+                            </label>
                             {assignees.map(assignee => (
                                 <label key={assignee.id ?? 'none'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>
                                     <input
@@ -1673,6 +1685,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     </button>
                     {showRelationSettingsMenu && (
                         <div
+                            ref={relationSettingsPanelRef}
                             data-testid="relation-settings-menu"
                             style={{
                                 position: 'absolute',
@@ -1891,6 +1904,7 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                     </button>
                     {showExportMenu && (
                         <div
+                            ref={exportPanelRef}
                             data-testid="export-menu"
                             style={{
                                 position: 'absolute',

@@ -1992,6 +1992,39 @@ describe('TaskStore filter hierarchy', () => {
         expect(visibleTasks.find(task => task.id === 'parent')?.isContextOnly).toBe(true);
         expect(visibleTasks.find(task => task.id === 'child')?.isContextOnly).toBe(false);
     });
+
+    it('setFilterText は折りたたまれた親・バージョン・プロジェクトの下の一致タスクも表示する', () => {
+        const tasks = [
+            buildTask({ id: 'parent', subject: 'Parent', projectId: 'p1', fixedVersionId: 'v1', hasChildren: true }),
+            buildTask({ id: 'child', subject: 'Child Match', projectId: 'p1', fixedVersionId: 'v1', parentId: 'parent' })
+        ];
+
+        const { setTasks, setVersions, toggleTaskExpansion, toggleVersionExpansion, toggleProjectExpansion, setFilterText } = useTaskStore.getState();
+        setTasks(tasks);
+        setVersions([{ id: 'v1', name: 'V1', projectId: 'p1', status: 'open' } as never]);
+        useTaskStore.setState({ groupByProject: true, showVersions: true });
+        toggleTaskExpansion('parent');
+        toggleVersionExpansion('v1');
+        toggleProjectExpansion('p1');
+        setFilterText('Match');
+
+        expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['parent', 'child']);
+
+        setFilterText('');
+        expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual([]);
+    });
+
+    it('setFilterText は全角・半角や大文字・小文字の違いを無視する', () => {
+        const tasks = [
+            buildTask({ id: 'a', subject: 'ＡＰＩ設計ﾚﾋﾞｭｰ' }),
+            buildTask({ id: 'b', subject: 'Other' })
+        ];
+
+        const { setTasks, setFilterText } = useTaskStore.getState();
+        setTasks(tasks);
+        setFilterText('api設計レビュー');
+        expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['a']);
+    });
 });
 
 describe('TaskStore hierarchy layout guides', () => {

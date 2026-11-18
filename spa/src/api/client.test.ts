@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from './client';
+import { setIncludeParentIssues } from './includeParentIssues';
 import { addCalendarDays, diffCalendarDays, formatDateOnly, parseDateOnly } from '../utils/dateOnly';
 import { LayoutEngine } from '../engines/LayoutEngine';
 import { TaskLogicService } from '../services/TaskLogicService';
@@ -67,6 +68,23 @@ describe('apiClient.fetchData', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         delete window.RedmineCanvasGantt;
+    });
+
+    it('asks for parent issues only when the display preference is on', async () => {
+        window.RedmineCanvasGantt = { projectId: 1, apiBase: '/projects/1/canvas_gantt', redmineBase: '', authToken: 'token' };
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ tasks: [] }) });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        await apiClient.fetchData({ rawSearch: '?assigned_to_ids=5' });
+        expect(String(fetchMock.mock.calls[0][0])).not.toContain('include_parent_issues');
+
+        setIncludeParentIssues(true);
+        try {
+            await apiClient.fetchData({ rawSearch: '?assigned_to_ids=5' });
+        } finally {
+            setIncludeParentIssues(false);
+        }
+        expect(String(fetchMock.mock.calls[1][0])).toContain('assigned_to_ids=5&include_parent_issues=1');
     });
 
     it('preserves the server request ID in an error response', async () => {

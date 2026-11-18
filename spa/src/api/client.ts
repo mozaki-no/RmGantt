@@ -23,6 +23,7 @@ import type { DatePlacementMode } from '../types/constraints';
 import { getBusinessCalendarPayload, normalizeBusinessCalendarPayload } from '../utils/businessCalendar';
 import { formatDateOnly, parseDateOnly } from '../utils/dateOnly';
 import { sessionFetch } from './sessionFetch';
+import { shouldIncludeParentIssues } from './includeParentIssues';
 import { decodeMutationFailure, type MutationFailure, type MutationStatusValue } from './mutationOutcome';
 
 export {
@@ -799,9 +800,12 @@ export const apiClient = {
 
         const parseDate = parseDateOnly;
 
-        const qs = params?.rawSearch
+        const baseQs = params?.rawSearch
             ? params.rawSearch.replace(/^\?/, '')
             : buildIssueQueryParams(params?.query ?? {}, { queryContext: params?.queryContext }).toString();
+        const qs = shouldIncludeParentIssues()
+            ? [baseQs, 'include_parent_issues=1'].filter(Boolean).join('&')
+            : baseQs;
         const url = new URL(`${config.apiBase}/data.json` + (qs ? `?${qs}` : ''), window.location.origin).toString();
 
         const response = await sessionFetch(url, {

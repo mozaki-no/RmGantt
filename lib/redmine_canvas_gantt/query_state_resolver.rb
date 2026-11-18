@@ -12,6 +12,7 @@ module RedmineCanvasGantt
       selected_version_ids: [],
       selected_tracker_ids: [],
       member_projects_only: false,
+      include_parent_issues: false,
       sort_config: { key: 'startDate', direction: 'asc' },
       group_by_project: true,
       group_by_assignee: false,
@@ -88,6 +89,7 @@ module RedmineCanvasGantt
       selected_project_ids = resolve_selected_project_ids(allowed_project_ids(project_ids))
       state[:show_subprojects] = resolve_show_subprojects
       state[:member_projects_only] = resolve_member_projects_only
+      state[:include_parent_issues] = ActiveModel::Type::Boolean.new.cast(@params[:include_parent_issues]) == true
 
       query_resolution = resolve_query_resolution
       state.merge!(state_from_query(query_resolution.query)) if query_resolution.query
@@ -397,6 +399,8 @@ module RedmineCanvasGantt
         values.map do |value|
           if allow_none && value.to_s == 'none'
             nil
+          elsif allow_none && value.to_s == 'me'
+            @current_user&.id
           elsif value.to_s.match?(/\A-?\d+\z/)
             value.to_i
           end
@@ -601,6 +605,8 @@ module RedmineCanvasGantt
       split_list_values(values).each_with_object([]) do |value, parsed|
         if none_marker?(value)
           parsed << nil
+        elsif value == 'me'
+          parsed << @current_user.id if @current_user
         elsif integer_string?(value)
           parsed << value.to_i
         end
