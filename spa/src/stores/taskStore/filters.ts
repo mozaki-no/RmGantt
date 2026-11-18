@@ -1,5 +1,22 @@
 import type { Task } from '../../types';
 
+// Subject search ignores case and full-width/half-width differences, so
+// "ＡＰＩ" finds "api" and "ﾚﾋﾞｭｰ" finds "レビュー".
+export const normalizeSearchText = (text: string): string => text.normalize('NFKC').toLowerCase().trim();
+
+const normalizedSubjectCache = new Map<string, string>();
+
+export const subjectMatchesSearch = (subject: string, normalizedText: string): boolean => {
+    if (!normalizedText) return true;
+    let normalizedSubject = normalizedSubjectCache.get(subject);
+    if (normalizedSubject === undefined) {
+        if (normalizedSubjectCache.size > 50000) normalizedSubjectCache.clear();
+        normalizedSubject = subject.normalize('NFKC').toLowerCase();
+        normalizedSubjectCache.set(subject, normalizedSubject);
+    }
+    return normalizedSubject.includes(normalizedText);
+};
+
 export const applyFilters = (
     tasks: Task[],
     filterText: string,
@@ -10,8 +27,8 @@ export const applyFilters = (
     showSubprojects: boolean = true,
     currentProjectId: string | null = null
 ) => {
-    const lowerText = filterText.toLowerCase();
-    const hasTextFilter = Boolean(lowerText);
+    const searchText = normalizeSearchText(filterText);
+    const hasTextFilter = Boolean(searchText);
     const hasAssigneeFilter = selectedAssigneeIds.length > 0;
     const hasProjectFilter = selectedProjectIds.length > 0;
     const hasVersionFilter = selectedVersionIds.length > 0;
@@ -28,7 +45,7 @@ export const applyFilters = (
     }
 
     const matched = tasks.filter(t => {
-        const matchesText = !hasTextFilter || t.subject.toLowerCase().includes(lowerText);
+        const matchesText = !hasTextFilter || subjectMatchesSearch(t.subject, searchText);
         const taskAssignee = t.assignedToId === undefined ? null : t.assignedToId;
         const matchesAssignee = !hasAssigneeFilter || selectedAssigneeIds.includes(taskAssignee);
         const matchesProject = !hasProjectFilter || (t.projectId && selectedProjectIds.includes(t.projectId));

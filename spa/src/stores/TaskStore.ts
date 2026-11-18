@@ -11,7 +11,7 @@ import type { MoveTaskAsChildResult } from '../types';
 import type { CustomFieldMeta } from '../types/editMeta';
 import type { LayoutState, SortConfig } from './taskStore/types';
 import { buildLayout, getVersionRowId, NO_VERSION_ID } from './taskStore/layout';
-import { applyFilters } from './taskStore/filters';
+import { applyFilters, normalizeSearchText, subjectMatchesSearch } from './taskStore/filters';
 import { isDescendantTask, tailDisplayOrderForParent, tailDisplayOrderForRoot } from './taskStore/hierarchy';
 import {
     clampViewportScrollY,
@@ -20,7 +20,7 @@ import {
 } from './taskStore/viewport';
 import { buildMoveTaskResult, saveModifiedTasks } from './taskStore/taskPersistence';
 import { runParentMove } from './taskStore/parentMove';
-import { buildUniformExpansionMaps, initializeExpansionMaps } from './taskStore/expansion';
+import { buildUniformExpansionMaps, initializeExpansionMaps, type ExpansionMaps } from './taskStore/expansion';
 import { syncSharedQueryState, type SharedQuerySyncState } from './taskStore/querySync';
 import {
     beginBarOperation as beginBarOperationState,
@@ -237,6 +237,8 @@ export interface TaskState {
     versionExpansion: Record<string, boolean>;
     taskExpansion: Record<string, boolean>;
     filterText: string;
+    // Expansion state from before a subject search started; restored when the search is cleared.
+    preSearchExpansion: ExpansionMaps | null;
     selectedAssigneeIds: (number | null)[];
     selectedProjectIds: string[];
     projectSelectionExplicit: boolean;
@@ -558,6 +560,32 @@ const getLayoutRootForTask = (task: Task, taskById: Map<string, Task>, state: Pi
     }
 
     return root;
+};
+
+// Opens every collapsed parent, group and version row that would hide `task`.
+const revealTaskInExpansion = (
+    task: Task,
+    taskById: Map<string, Task>,
+    state: Pick<TaskState, 'groupByAssignee' | 'groupByProject'>,
+    maps: ExpansionMaps
+) => {
+    let currentParentId = task.parentId;
+    while (currentParentId) {
+        maps.taskExpansion[currentParentId] = true;
+        currentParentId = taskById.get(currentParentId)?.parentId;
+    }
+
+    maps.projectExpansion[task.projectId ?? 'default_project'] = true;
+    const assigneeId = task.assignedToId === undefined || task.assignedToId === null
+        ? 'none'
+        : String(task.assignedToId);
+    maps.projectExpansion[`assignee:${assigneeId}`] = true;
+
+    const rootTask = getLayoutRootForTask(task, taskById, state);
+    const rootGroupKey = getTaskGroupKey(rootTask, state);
+    const rootVersionId = rootTask.fixedVersionId || NO_VERSION_ID;
+    maps.versionExpansion[rootVersionId] = true;
+    maps.versionExpansion[getVersionRowId(rootGroupKey, rootVersionId)] = true;
 };
 
 const toDerivedTaskStatePatch = (derived: DerivedTaskState): DerivedTaskStatePatch => ({
@@ -976,8 +1004,8 @@ const getTaskFocusTimestamp = (task: Task): number => {
 };
 
 const matchesTaskFilters = (task: Task, state: TaskState): boolean => {
-    const lowerText = state.filterText.toLowerCase();
-    const hasTextFilter = Boolean(lowerText);
+    const searchText = normalizeSearchText(state.filterText);
+    const hasTextFilter = Boolean(searchText);
     const hasAssigneeFilter = state.selectedAssigneeIds.length > 0;
     const hasProjectFilter = state.selectedProjectIds.length > 0;
     const hasVersionFilter = state.selectedVersionIds.length > 0;
@@ -991,7 +1019,7 @@ const matchesTaskFilters = (task: Task, state: TaskState): boolean => {
     const taskAssignee = task.assignedToId === undefined ? null : task.assignedToId;
 
     return (
-        (!hasTextFilter || task.subject.toLowerCase().includes(lowerText)) &&
+        (!hasTextFilter || subjectMatchesSearch(task.subject, searchText)) &&
         (!hasAssigneeFilter || state.selectedAssigneeIds.includes(taskAssignee)) &&
         (!hasProjectFilter || (task.projectId !== undefined && state.selectedProjectIds.includes(task.projectId))) &&
         (!hasVersionFilter || (
@@ -1167,6 +1195,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
     versionExpansion: {},
     taskExpansion: {},
     filterText: '',
+    preSearchExpansion: null,
     selectedAssigneeIds: [],
     selectedProjectIds: [],
     projectSelectionExplicit: false,
@@ -2562,9 +2591,48 @@ export const useTaskStore = create<TaskState>((set, get) => {
     }),
 
     setFilterText: (text) => set((state) => {
-        const layout = buildLayoutFromState(state, { filterText: text });
+        const wasSearching = Boolean(normalizeSearchText(state.filterText));
+        const isSearching = Boolean(normalizeSearchText(text));
+        const currentExpansion: ExpansionMaps = {
+            projectExpansion: state.projectExpansion,
+            versionExpansion: state.versionExpansion,
+            taskExpansion: state.taskExpansion
+        };
+        let preSearchExpansion = state.preSearchExpansion;
+        let expansion = currentExpansion;
+
+        if (isSearching) {
+            // A match hidden under a collapsed parent, version or group would
+            // make the search look broken, so open the rows above each match.
+            if (!wasSearching || !preSearchExpansion) preSearchExpansion = currentExpansion;
+            expansion = {
+                projectExpansion: { ...state.projectExpansion },
+                versionExpansion: { ...state.versionExpansion },
+                taskExpansion: { ...state.taskExpansion }
+            };
+            const taskById = new Map(state.allTasks.map((task) => [task.id, task]));
+            applyFilters(
+                state.allTasks,
+                text,
+                state.selectedAssigneeIds,
+                state.selectedProjectIds,
+                state.selectedVersionIds,
+                state.selectedTrackerIds,
+                state.showSubprojects,
+                state.currentProjectId
+            ).forEach((task) => {
+                if (!task.isContextOnly) revealTaskInExpansion(task, taskById, state, expansion);
+            });
+        } else if (preSearchExpansion) {
+            expansion = preSearchExpansion;
+            preSearchExpansion = null;
+        }
+
+        const layout = buildLayoutFromState(state, { filterText: text, ...expansion });
         return {
             filterText: text,
+            preSearchExpansion,
+            ...expansion,
             tasks: layout.tasks,
             layoutRows: layout.layoutRows,
             rowCount: layout.rowCount
@@ -2689,25 +2757,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
         const nextProjectExpansion = { ...state.projectExpansion };
         const nextVersionExpansion = { ...state.versionExpansion };
         const taskById = new Map(state.allTasks.map((task) => [task.id, task]));
-
-        let currentParentId = targetTask.parentId;
-        while (currentParentId) {
-            nextTaskExpansion[currentParentId] = true;
-            currentParentId = taskById.get(currentParentId)?.parentId;
-        }
-
-        const projectId = targetTask.projectId ?? 'default_project';
-        nextProjectExpansion[projectId] = true;
-        const assigneeId = targetTask.assignedToId === undefined || targetTask.assignedToId === null
-            ? 'none'
-            : String(targetTask.assignedToId);
-        nextProjectExpansion[`assignee:${assigneeId}`] = true;
-
-        const rootTask = getLayoutRootForTask(targetTask, taskById, state);
-        const rootGroupKey = getTaskGroupKey(rootTask, state);
-        const rootVersionId = rootTask.fixedVersionId || NO_VERSION_ID;
-        nextVersionExpansion[rootVersionId] = true;
-        nextVersionExpansion[getVersionRowId(rootGroupKey, rootVersionId)] = true;
+        revealTaskInExpansion(targetTask, taskById, state, {
+            taskExpansion: nextTaskExpansion,
+            projectExpansion: nextProjectExpansion,
+            versionExpansion: nextVersionExpansion
+        });
 
         const layout = buildLayoutFromState(state, {
             taskExpansion: nextTaskExpansion,
