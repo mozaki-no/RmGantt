@@ -12,6 +12,7 @@ import {
     saveGlobalDisplayPreferences
 } from '../utils/preferences';
 import { fontFamilies, designTokens } from '../styles/designTokens';
+import { useKeepInViewport } from './gantt/useKeepInViewport';
 
 const DEFAULT_DISPLAY_SETTINGS = {
     showProgressLine: false,
@@ -102,6 +103,7 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
     showDisplaySettingsMenu,
     onToggleDisplaySettingsMenu
 }) => {
+    const displaySettingsPanelRef = useKeepInViewport<HTMLDivElement>(showDisplaySettingsMenu);
     const {
         zoomLevel,
         viewMode,
@@ -273,6 +275,7 @@ export const DisplaySettingsControls: React.FC<DisplaySettingsControlsProps> = (
 
             {showDisplaySettingsMenu && (
                 <div
+                    ref={displaySettingsPanelRef}
                     data-testid="display-settings-menu"
                     style={{
                         position: 'absolute',
