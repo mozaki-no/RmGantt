@@ -48,6 +48,7 @@ import { AutoScheduleMoveMode, DatePlacementMode, type DatePlacementMode as Date
 import { configureBusinessCalendar, normalizeTaskDateInterval } from '../utils/businessCalendar';
 import { fromLocalDate, parseDateOnly, toCalendarDate, toTimelineDate, todayCalendarDate } from '../utils/dateOnly';
 import { apiClient } from '../api/client';
+import { setIncludeParentIssues } from '../api/includeParentIssues';
 import type { MutationMetadata } from '../api/client';
 import { classifyMutationSourceDisposition } from '../api/mutationOutcome';
 import type { MutationRemoteAvailability } from '../api/mutationOutcome';
@@ -245,6 +246,7 @@ export interface TaskState {
     selectedVersionIds: string[];
     selectedTrackerIds: number[];
     memberProjectsOnly: boolean;
+    showFilterParents: boolean;
 
     sortConfig: SortConfig;
     customScales: Record<number, number>;
@@ -333,6 +335,7 @@ export interface TaskState {
     setSelectedVersionIds: (ids: string[]) => void;
     setSelectedTrackerIds: (ids: number[]) => void;
     setMemberProjectsOnly: (enabled: boolean) => Promise<void>;
+    setShowFilterParents: (enabled: boolean) => Promise<void>;
     scrollToTask: (taskId: string) => void;
     focusTask: (taskId: string) => { status: 'ok' | 'filtered_out' | 'missing' };
     setSortConfig: (key: string | null) => void;
@@ -1202,6 +1205,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
     selectedVersionIds: [],
     selectedTrackerIds: [],
     memberProjectsOnly: preferences.memberProjectsOnly ?? false,
+    showFilterParents: (() => {
+        const enabled = preferences.showFilterParents ?? false;
+        setIncludeParentIssues(enabled);
+        return enabled;
+    })(),
     sortConfig: { key: 'startDate', direction: 'asc' },
     customScales: preferences.customScales ?? {},
     currentProjectId: window.RedmineCanvasGantt?.projectId?.toString() || null,
@@ -2493,6 +2501,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
         return {
             currentProjectId: id,
             memberProjectsOnly: newPrefs.memberProjectsOnly ?? false,
+            showFilterParents: (() => {
+                const enabled = newPrefs.showFilterParents ?? false;
+                setIncludeParentIssues(enabled);
+                return enabled;
+            })(),
             tasks: layout.tasks,
             layoutRows: layout.layoutRows,
             rowCount: layout.rowCount
@@ -2705,6 +2718,16 @@ export const useTaskStore = create<TaskState>((set, get) => {
         queueRefreshData(get().refreshData);
         return nextState;
     }),
+    setShowFilterParents: async (enabled) => {
+        const current = get();
+        if (current.showFilterParents === enabled) return;
+
+        invalidateDataRequests();
+        setIncludeParentIssues(enabled);
+        set({ showFilterParents: enabled });
+        saveDisplayPreferences({ showFilterParents: enabled }, current.currentProjectId);
+        if (current.selectedAssigneeIds.length > 0) await get().refreshData();
+    },
     setMemberProjectsOnly: async (enabled) => {
         const current = get();
         if (current.memberProjectsOnly === enabled) return;

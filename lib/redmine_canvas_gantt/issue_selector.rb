@@ -1,3 +1,4 @@
+require 'set'
 require_relative 'spent_hours_batch'
 
 module RedmineCanvasGantt
@@ -48,6 +49,9 @@ module RedmineCanvasGantt
       scope = apply_version_filter(scope, state[:selected_version_ids]) if state[:selected_version_ids].present?
       scope = apply_assignee_filter(scope, state[:selected_assignee_ids]) if state[:selected_assignee_ids].present?
       scope = scope.where(tracker_id: state[:selected_tracker_ids]) if state[:selected_tracker_ids].present?
+      if state[:include_parent_issues] && state[:selected_assignee_ids].present? && none_filters.empty?
+        scope = with_parent_issues(scope, project_ids: project_ids, redmine_project_ids: redmine_project_ids)
+      end
       # Every filter above is a plain issues column and sorting happens in Ruby,
       # so no SQL predicate references these associations - they are read only
       # while serializing. `includes` was free to answer that with a joined
@@ -60,6 +64,27 @@ module RedmineCanvasGantt
       # With a lookup_association_preloader, plain belongs_to lookups are
       # assigned after loading instead, which is cheaper still.
       scope.preload(*preload_includes)
+    end
+
+    # Adds the visible parent chain of every matched issue, whoever it is
+    # assigned to, so an assignee filter can still show where a task sits.
+    # The parents bypass the view filters but stay inside the project boundary.
+    def with_parent_issues(filtered_scope, project_ids:, redmine_project_ids:)
+      base = @issue_scope.where(project_id: project_ids)
+      base = base.where(project_id: redmine_project_ids) unless redmine_project_ids.nil?
+
+      parent_ids = Set.new
+      frontier = filtered_scope.where.not(parent_id: nil).distinct.pluck(:parent_id)
+      until frontier.empty?
+        frontier = frontier.reject { |id| parent_ids.include?(id) }
+        break if frontier.empty?
+
+        parent_ids.merge(frontier)
+        frontier = Issue.where(id: frontier).where.not(parent_id: nil).distinct.pluck(:parent_id)
+      end
+      return filtered_scope if parent_ids.empty?
+
+      base.where(id: filtered_scope.select(:id)).or(base.where(id: parent_ids.to_a))
     end
 
     def lookup_includes

@@ -38,6 +38,7 @@ export interface StoredPreferences {
     todayOnwardOnly?: boolean;
     sidebarFontSize?: number;
     memberProjectsOnly?: boolean;
+    showFilterParents?: boolean;
 }
 
 export type DisplayPreferencesSource = 'project' | 'global' | 'default';
@@ -64,6 +65,7 @@ export interface StoredDisplayPreferences {
     rowHeight?: number;
     sidebarFontSize?: number;
     memberProjectsOnly?: boolean;
+    showFilterParents?: boolean;
     autoSave?: boolean;
 }
 
@@ -109,6 +111,7 @@ export type DisplayPreferencesSnapshot = Pick<
     | 'rowHeight'
     | 'sidebarFontSize'
     | 'memberProjectsOnly'
+    | 'showFilterParents'
     | 'autoSave'
 >;
 
@@ -158,7 +161,8 @@ const sanitizePreferences = (prefs: StoredPreferences): StoredPreferences => Obj
         todayOnwardOnly: prefs.todayOnwardOnly,
         organizeByDependency: prefs.organizeByDependency,
         sidebarFontSize: prefs.sidebarFontSize,
-        memberProjectsOnly: prefs.memberProjectsOnly
+        memberProjectsOnly: prefs.memberProjectsOnly,
+        showFilterParents: prefs.showFilterParents
     }).filter(([, value]) => value !== undefined)
 ) as StoredPreferences;
 
@@ -185,6 +189,7 @@ const sanitizeDisplayPreferences = (prefs: StoredPreferences): StoredDisplayPref
         rowHeight: prefs.rowHeight,
         sidebarFontSize: prefs.sidebarFontSize,
         memberProjectsOnly: prefs.memberProjectsOnly,
+        showFilterParents: prefs.showFilterParents,
         autoSave: prefs.autoSave
     }).filter(([, value]) => value !== undefined)
 ) as StoredDisplayPreferences;

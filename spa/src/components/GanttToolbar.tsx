@@ -50,13 +50,13 @@ export const GanttToolbar: React.FC<GanttToolbarProps> = ({ zoomLevel, onZoomCha
     const {
         updateViewport, groupByProject, setGroupByProject, groupByAssignee, setGroupByAssignee,
         filterText, setFilterText, allTasks, versions, selectedAssigneeIds, setSelectedAssigneeIds,
-        selectedProjectIds, projectSelectionExplicit, setSelectedProjectIds, selectedTrackerIds, setSelectedTrackerIds, selectedVersionIds, setSelectedVersionIds, memberProjectsOnly, setMemberProjectsOnly,
+        selectedProjectIds, projectSelectionExplicit, setSelectedProjectIds, selectedTrackerIds, setSelectedTrackerIds, selectedVersionIds, setSelectedVersionIds, memberProjectsOnly, setMemberProjectsOnly, showFilterParents, setShowFilterParents,
         taskStatuses, selectedStatusIds, setSelectedStatusFromServer, showVersions, setShowVersions,
         modifiedTaskIds, saveChanges, discardChanges, autoSave, customFields, activeQueryId, isQueryModified, sortConfig, showSubprojects, permissions, filterOptions,
         applySavedQuery: applySavedQueryFromStore,
         clearSavedQuery: clearSavedQueryFromStore,
         savedQueries, savedQueriesStatus, savedQueriesError, loadSavedQueries, queryContext
-    } = useTaskStore(useShallow(state => pickKeys(state, ['updateViewport', 'groupByProject', 'setGroupByProject', 'groupByAssignee', 'setGroupByAssignee', 'filterText', 'setFilterText', 'allTasks', 'versions', 'selectedAssigneeIds', 'setSelectedAssigneeIds', 'selectedProjectIds', 'projectSelectionExplicit', 'setSelectedProjectIds', 'selectedTrackerIds', 'setSelectedTrackerIds', 'selectedVersionIds', 'setSelectedVersionIds', 'memberProjectsOnly', 'setMemberProjectsOnly', 'taskStatuses', 'selectedStatusIds', 'setSelectedStatusFromServer', 'showVersions', 'setShowVersions', 'modifiedTaskIds', 'saveChanges', 'discardChanges', 'autoSave', 'customFields', 'activeQueryId', 'isQueryModified', 'sortConfig', 'showSubprojects', 'permissions', 'filterOptions', 'applySavedQuery', 'clearSavedQuery', 'savedQueries', 'savedQueriesStatus', 'savedQueriesError', 'loadSavedQueries', 'queryContext'])));
+    } = useTaskStore(useShallow(state => pickKeys(state, ['updateViewport', 'groupByProject', 'setGroupByProject', 'groupByAssignee', 'setGroupByAssignee', 'filterText', 'setFilterText', 'allTasks', 'versions', 'selectedAssigneeIds', 'setSelectedAssigneeIds', 'selectedProjectIds', 'projectSelectionExplicit', 'setSelectedProjectIds', 'selectedTrackerIds', 'setSelectedTrackerIds', 'selectedVersionIds', 'setSelectedVersionIds', 'memberProjectsOnly', 'setMemberProjectsOnly', 'showFilterParents', 'setShowFilterParents', 'taskStatuses', 'selectedStatusIds', 'setSelectedStatusFromServer', 'showVersions', 'setShowVersions', 'modifiedTaskIds', 'saveChanges', 'discardChanges', 'autoSave', 'customFields', 'activeQueryId', 'isQueryModified', 'sortConfig', 'showSubprojects', 'permissions', 'filterOptions', 'applySavedQuery', 'clearSavedQuery', 'savedQueries', 'savedQueriesStatus', 'savedQueriesError', 'loadSavedQueries', 'queryContext'])));
     const {
         showBaseline,
         toggleBaseline,
@@ -1491,6 +1491,15 @@ const showDisplaySettingsMenu = isMenuOpen('displaySettings');
                                     onChange={toggleAllAssignees}
                                 />
                                 <span style={{ fontWeight: 500 }}>{i18n.t('label_all_select') || 'Select All'}</span>
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 0 8px', color: designTokens.textSecondary, cursor: 'pointer', borderBottom: `1px solid ${designTokens.borderSubtle}`, marginBottom: '8px' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={showFilterParents}
+                                    onChange={(event) => { void setShowFilterParents(event.target.checked).catch((error) => console.error('Failed to refresh data', error)); }}
+                                    aria-label={i18n.t('label_show_filter_parents') || 'Also show parent issues'}
+                                />
+                                <span>{i18n.t('label_show_filter_parents') || 'Also show parent issues'}</span>
                             </label>
                             {assignees.map(assignee => (
                                 <label key={assignee.id ?? 'none'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: designTokens.textSecondary, cursor: 'pointer' }}>

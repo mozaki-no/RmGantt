@@ -188,6 +188,27 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
     expect(result[:warnings]).not_to include('Ignored unsupported field tracker_id')
   end
 
+  it 'maps the Redmine me assignee value to the current user' do
+    allow(current_user).to receive(:logged?).and_return(true)
+    params = ActionController::Parameters.new(
+      set_filter: '1',
+      f: ['assigned_to_id'],
+      op: { 'assigned_to_id' => '=' },
+      v: { 'assigned_to_id' => ['me'] }
+    )
+
+    result = build_resolver(params: params).resolve(project_ids: [1, 2])
+
+    expect(result[:initial_state][:selected_assignee_ids]).to eq([5])
+    expect(result[:query_context][:explicit_overrides]).to include(assignee: { mode: 'subset', values: [5] })
+  end
+
+  it 'reads the include_parent_issues flag' do
+    result = build_resolver(params: ActionController::Parameters.new(include_parent_issues: '1')).resolve(project_ids: [1, 2])
+
+    expect(result[:initial_state][:include_parent_issues]).to be(true)
+  end
+
   it 'applies tracker all standard filter without adding a tracker scope' do
     params = ActionController::Parameters.new(
       set_filter: '1',
