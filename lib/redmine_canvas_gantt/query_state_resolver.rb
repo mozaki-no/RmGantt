@@ -400,7 +400,7 @@ module RedmineCanvasGantt
           if allow_none && value.to_s == 'none'
             nil
           elsif allow_none && value.to_s == 'me'
-            @current_user&.logged? ? @current_user.id : nil
+            @current_user&.id
           elsif value.to_s.match?(/\A-?\d+\z/)
             value.to_i
           end
@@ -606,7 +606,7 @@ module RedmineCanvasGantt
         if none_marker?(value)
           parsed << nil
         elsif value == 'me'
-          parsed << @current_user.id if @current_user&.logged?
+          parsed << @current_user.id if @current_user
         elsif integer_string?(value)
           parsed << value.to_i
         end

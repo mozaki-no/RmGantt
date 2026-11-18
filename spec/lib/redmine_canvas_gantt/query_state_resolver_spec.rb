@@ -189,7 +189,6 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
   end
 
   it 'maps the Redmine me assignee value to the current user' do
-    allow(current_user).to receive(:logged?).and_return(true)
     params = ActionController::Parameters.new(
       set_filter: '1',
       f: ['assigned_to_id'],
@@ -763,5 +762,6 @@ RSpec.describe RedmineCanvasGantt::QueryStateResolver do
       issue_includes: issue_includes).resolve(project_ids: [1, 2])
 
     expect(result[:initial_state][:selected_tracker_ids]).to eq([3])
+    expect(result[:initial_state][:selected_assignee_ids]).to eq([5])
   end
 end

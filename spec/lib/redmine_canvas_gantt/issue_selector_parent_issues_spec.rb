@@ -6,7 +6,7 @@ RSpec.describe RedmineCanvasGantt::IssueSelector, 'parent issues for an assignee
   let(:author) { User.find(2) }
   let(:assignee) { User.find(3) }
   let(:selector) do
-    described_class.new(issue_scope: Issue.all, issue_includes: [], current_user: User.find(1))
+    described_class.new(issue_scope: Issue.all, issue_includes: [:status], current_user: User.find(1))
   end
 
   def create_issue(subject, assigned_to: nil, parent: nil)
